@@ -60,6 +60,31 @@ def notify_trade(side: str, qty: float, price: float, sl: float, tp: float) -> N
     )
 
 
+def notify_daily_summary(
+    balance: float,
+    position: str,
+    today_trades: int,
+    today_pnl: float,
+    total_trades: int,
+    win_rate: float,
+    total_pnl: float,
+) -> None:
+    from datetime import datetime, timezone
+    date_str = datetime.now(timezone.utc).strftime("%a %d %b %Y")
+    today_pnl_str = f"{'+'if today_pnl>=0 else ''}{today_pnl:.2f}"
+    total_pnl_str = f"{'+'if total_pnl>=0 else ''}{total_pnl:.2f}"
+    send(
+        f"<b>Daily Summary — Bot 8 AVAX</b>\n"
+        f"📅 {date_str}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"Balance: ${balance:.2f} USDT\n"
+        f"Position: {position.upper()}\n"
+        f"Today: {today_trades} trade(s) | P&L {today_pnl_str} USDT\n"
+        f"All-time: {total_trades} trades | {win_rate:.1f}% win rate\n"
+        f"Total P&L: {total_pnl_str} USDT"
+    )
+
+
 def notify_close(side: str, pnl: float) -> None:
     emoji = "✅" if pnl >= 0 else "❌"
     send(

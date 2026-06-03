@@ -62,6 +62,23 @@ def snapshot_equity(db: Path, equity: float) -> None:
         con.commit()
 
 
+def fetch_daily_stats(db: Path, date_str: str) -> dict:
+    """Stats for trades closed on a specific UTC date (YYYY-MM-DD)."""
+    try:
+        with sqlite3.connect(db) as con:
+            row = con.execute("""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) AS wins,
+                       ROUND(SUM(pnl_usd), 2) AS pnl
+                FROM trades
+                WHERE closed_at IS NOT NULL AND closed_at LIKE ?
+            """, (f"{date_str}%",)).fetchone()
+            total, wins, pnl = row
+            return {"total": total or 0, "wins": wins or 0, "pnl": pnl or 0.0}
+    except Exception as e:
+        return {"total": 0, "wins": 0, "pnl": 0.0, "error": str(e)}
+
+
 def fetch_trade_stats(db: Path) -> dict:
     try:
         with sqlite3.connect(db) as con:

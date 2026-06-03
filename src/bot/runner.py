@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bot.db import close_trade, init_db, open_trade, snapshot_equity
+from bot.db import close_trade, fetch_daily_stats, fetch_trade_stats, init_db, open_trade, snapshot_equity
 from bot.exchange import BybitConnector
 from bot.strategy import AvaxSpectralStrategy
 from bot import telegram
@@ -39,6 +39,7 @@ class Bot8Runner:
         self._kill = kill_switch
         self._open_trade_id: int | None = None
         self._running = False
+        self._last_summary_day: int = -1
 
     async def start(self) -> None:
         init_db(self._db)
@@ -140,3 +141,20 @@ class Bot8Runner:
             if self._strat.state.win_streak >= self._strat.am_stk_min:
                 self._strat.state.consec_3x += 1
             telegram.notify_trade("short", signal.qty, signal.price, signal.sl_price, signal.tp_price)
+
+        # Daily summary — fires once per day at first bar on or after 09:00 UTC
+        now_utc = datetime.now(timezone.utc)
+        if now_utc.hour >= 9 and now_utc.day != self._last_summary_day:
+            self._last_summary_day = now_utc.day
+            today_str = now_utc.strftime("%Y-%m-%d")
+            daily = fetch_daily_stats(self._db, today_str)
+            stats = fetch_trade_stats(self._db)
+            telegram.notify_daily_summary(
+                balance=balance,
+                position=position.side,
+                today_trades=daily["total"],
+                today_pnl=daily["pnl"],
+                total_trades=stats.get("total", 0),
+                win_rate=stats.get("win_rate", 0.0),
+                total_pnl=stats.get("total_pnl", 0.0),
+            )
