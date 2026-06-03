@@ -1,0 +1,29 @@
+bot:
+  name: "Bot 8 — AVAX Spectral"
+  version: "0.1.0"
+
+exchange:
+  name: bybit
+  symbol: "AVAX/USDT:USDT"
+  # Keys loaded from env: BYBIT_API_KEY / BYBIT_API_SECRET
+
+strategy:
+  timeframe: 30m
+  # Spectral centroid threshold — higher = only enter in strong trends
+  tc_thresh: 45.0
+  ema_fast: 20
+  ema_slow: 60
+  sl_pct: 2.5
+  tp_pct: 7.0
+  use_shorts: true
+
+sizing:
+  # % of current equity per trade — auto-scales as account grows.
+  equity_pct: 0.40        # 40% of equity per trade (3x leverage on perps)
+  am_mult_max: 2.0        # 2x on win streak
+  am_mult_fallback: 1.5
+  am_streak_min: 2
+  max_consec_3x: 1
+
+persistence:
+  db_path: logs/trades.db
