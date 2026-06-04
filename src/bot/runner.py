@@ -17,12 +17,28 @@ LOG = logging.getLogger("bot8.runner")
 BAR_DELAY_SECS = 10
 BAR_SECONDS = 30 * 60  # 30-minute bars
 
+# If the just-closed bar isn't on the exchange yet (lag), retry within the
+# window rather than waiting a whole bar. 8 x 20s = up to ~160s of cushion.
+FRESH_RETRIES = 8
+FRESH_RETRY_DELAY = 20
+
 
 def _next_bar_close(now: datetime) -> float:
     """Seconds until next 30m bar close + delay."""
     ts = now.timestamp()
     remainder = ts % BAR_SECONDS
     return (BAR_SECONDS - remainder) + BAR_DELAY_SECS
+
+
+def _expected_closed_open(now: datetime) -> "pd.Timestamp":
+    """Open-time of the bar that should have just closed at `now`.
+
+    At 12:30:10 the just-closed 30m bar opened at 12:00 — that's the row we
+    expect to be the last closed bar.
+    """
+    import pandas as pd
+    last_boundary = (now.timestamp() // BAR_SECONDS) * BAR_SECONDS
+    return pd.Timestamp(last_boundary - BAR_SECONDS, unit="s", tz="UTC")
 
 
 class Bot8Runner:
@@ -71,8 +87,40 @@ class Bot8Runner:
                 LOG.exception("tick_error")
                 await asyncio.sleep(60)
 
-    async def _tick(self) -> None:
+    async def _fetch_fresh_ohlcv(self):
+        """Fetch closed bars, making sure the just-closed bar is actually present.
+
+        Returns (df, is_fresh). Retries within the bar window if the exchange is
+        lagging, so a few seconds of delay never costs us a frame.
+        """
+        expected = _expected_closed_open(datetime.now(timezone.utc))
         df = await self._ex.fetch_ohlcv()
+        for attempt in range(FRESH_RETRIES):
+            if len(df) and df.index[-1] >= expected:
+                return df, True
+            LOG.warning(
+                "stale_bar_retry",
+                extra={
+                    "have": str(df.index[-1]) if len(df) else "none",
+                    "want": str(expected),
+                    "attempt": attempt + 1,
+                },
+            )
+            await asyncio.sleep(FRESH_RETRY_DELAY)
+            df = await self._ex.fetch_ohlcv()
+        return df, bool(len(df) and df.index[-1] >= expected)
+
+    async def _tick(self) -> None:
+        df, fresh = await self._fetch_fresh_ohlcv()
+        if not fresh:
+            have = str(df.index[-1]) if len(df) else "none"
+            LOG.error("stale_bar_giving_up", extra={"have": have})
+            await telegram.send(
+                "⚠️ <b>Bot 8 — frame skipped</b>\n"
+                "Bybit didn't return the just-closed 30m bar in time. "
+                "No trade this bar; will re-check at the next close."
+            )
+            return
         position = await self._ex.fetch_position()
         balance = await self._ex.fetch_balance()
         signal = self._strat.evaluate(df, equity=balance)

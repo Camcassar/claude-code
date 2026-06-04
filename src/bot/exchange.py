@@ -87,7 +87,13 @@ class BybitConnector:
         df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         df = df.set_index("timestamp")
-        return df.iloc[:-1]  # drop in-progress bar
+        # Keep only bars that have FULLY closed. ccxt timestamps are bar-open
+        # times, so a bar opened at T closes at T + bar_secs. Selecting by time
+        # (not by position) is robust whether or not the exchange has yet
+        # produced the in-progress bar — so we never drop the bar we want.
+        bar_secs = self._ex.parse_timeframe(timeframe)
+        closed = df.index + pd.Timedelta(seconds=bar_secs) <= pd.Timestamp.now(tz="UTC")
+        return df[closed]
 
     async def fetch_balance(self) -> float:
         bal = await _with_backoff(lambda: self._ex.fetch_balance({"type": "unified"}))

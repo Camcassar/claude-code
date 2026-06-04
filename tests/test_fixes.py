@@ -142,6 +142,74 @@ async def test_close_position_skips_zero_qty():
 
 
 # ---------------------------------------------------------------------------
+# Fix 6: fetch_ohlcv selects closed bars by TIME, never blindly drops last row
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_fetch_ohlcv_keeps_only_closed_bars():
+    import pandas as pd
+    from bot.exchange import BybitConnector
+
+    conn = BybitConnector(api_key="k", api_secret="s", symbol="AVAX/USDT")
+    now = pd.Timestamp.now(tz="UTC")
+    floor = now.floor("30min")  # open of the current, still-forming bar
+    mk = lambda ts: [int(ts.timestamp() * 1000), 1.0, 1.0, 1.0, 1.0, 1.0]
+    raw = [
+        mk(floor - pd.Timedelta(minutes=60)),
+        mk(floor - pd.Timedelta(minutes=30)),
+        mk(floor),  # in-progress bar — must be excluded
+    ]
+    conn._ex.fetch_ohlcv = AsyncMock(return_value=raw)
+
+    df = await conn.fetch_ohlcv("30m")
+
+    assert len(df) == 2, "forming bar must be excluded"
+    assert df.index[-1] == floor - pd.Timedelta(minutes=30), "last bar must be the just-closed one"
+
+
+# ---------------------------------------------------------------------------
+# Fix 7: a stale (lagging) bar skips the frame with an alert — never trades old data
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stale_bar_skips_and_alerts():
+    import pandas as pd
+    from datetime import datetime, timezone
+    from bot.runner import Bot8Runner
+    from bot.db import init_db
+
+    mock_ex = AsyncMock()
+    mock_ex.symbol = "AVAXUSDT"
+    stale = pd.DataFrame(
+        {"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "volume": [1.0]},
+        index=pd.to_datetime(["2026-06-04 08:00:00"], utc=True),  # well before expected 09:30
+    )
+    mock_ex.fetch_ohlcv.return_value = stale
+
+    fixed_now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=timezone.utc)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "trades.db"
+        init_db(db_path)
+        runner = Bot8Runner(mock_ex, MagicMock(), db_path, Path(tmp) / ".kill")
+
+        sent: list[str] = []
+
+        async def fake_send(msg):
+            sent.append(msg)
+
+        with patch("bot.runner.FRESH_RETRIES", 1), \
+             patch("bot.runner.FRESH_RETRY_DELAY", 0), \
+             patch("bot.telegram.send", side_effect=fake_send), \
+             patch("bot.runner.datetime") as mock_dt:
+            mock_dt.now.return_value = fixed_now
+            await runner._tick()
+
+        assert any("frame skipped" in s for s in sent), "must alert on a missed frame"
+        mock_ex.fetch_position.assert_not_called(), "must not trade on stale data"
+
+
+# ---------------------------------------------------------------------------
 # Fix 3: Telegram send is non-blocking (runs in thread, not blocking loop)
 # ---------------------------------------------------------------------------
 
