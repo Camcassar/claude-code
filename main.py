@@ -22,13 +22,16 @@ from bot.strategy import AvaxSpectralStrategy # noqa: E402
 from bot import telegram                      # noqa: E402
 
 (PROJECT_ROOT / "logs").mkdir(parents=True, exist_ok=True)
+_log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+_log_file = PROJECT_ROOT / "logs" / "bot8.log"
+try:
+    _log_handlers.append(logging.FileHandler(_log_file))
+except OSError:
+    pass  # Railway ephemeral fs — stdout only is fine
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(PROJECT_ROOT / "logs" / "bot8.log"),
-    ],
+    handlers=_log_handlers,
 )
 LOG = logging.getLogger("bot8")
 
@@ -93,7 +96,6 @@ async def _run(cfg: dict) -> None:
         token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
     )
-    telegram.send("🚀 <b>Bot 8 — AVAX Spectral started</b>\nRunning on AVAX/USDT Perp | 3x | 30m bars")
     print(f"Bot 8 — AVAX Spectral | {cfg['exchange']['symbol']} | LIVE MODE", flush=True)
     await runner.start()
 

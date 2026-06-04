@@ -46,6 +46,7 @@ class Bot8Runner:
         await self._ex.connect()
         self._running = True
         LOG.info("bot8_started")
+        telegram.send("🚀 <b>Bot 8 — AVAX Spectral running</b>\nConnected to Bybit | AVAX/USDT Perp | 3x | 30m bars")
         await self._loop()
 
     async def stop(self) -> None:
