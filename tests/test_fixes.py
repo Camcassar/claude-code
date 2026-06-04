@@ -108,6 +108,40 @@ async def test_backoff_raises_after_max_retries():
 
 
 # ---------------------------------------------------------------------------
+# Fix 5: close_position must send the REAL position qty (not amount=0)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_close_position_sends_real_qty():
+    """amount=0 was rejected by Bybit — close must use the actual contracts held."""
+    from bot.exchange import BybitConnector
+
+    conn = BybitConnector(api_key="k", api_secret="s", symbol="AVAX/USDT")
+    conn._ex.create_order = AsyncMock(return_value={"id": "abc"})
+
+    await conn.close_position("long", qty=12.5)
+
+    _, kwargs = conn._ex.create_order.call_args
+    assert kwargs["amount"] == 12.5, "close must pass the real qty, never 0"
+    assert kwargs["side"] == "sell"            # closing a long
+    assert kwargs["params"].get("reduceOnly") is True
+
+
+@pytest.mark.asyncio
+async def test_close_position_skips_zero_qty():
+    """Defensive: never fire a zero-qty order at the exchange."""
+    from bot.exchange import BybitConnector
+
+    conn = BybitConnector(api_key="k", api_secret="s", symbol="AVAX/USDT")
+    conn._ex.create_order = AsyncMock(return_value={"id": "abc"})
+
+    result = await conn.close_position("short", qty=0.0)
+
+    assert result == {}
+    conn._ex.create_order.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Fix 3: Telegram send is non-blocking (runs in thread, not blocking loop)
 # ---------------------------------------------------------------------------
 

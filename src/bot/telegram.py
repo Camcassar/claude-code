@@ -15,6 +15,13 @@ def init(token: str, chat_id: str) -> None:
     global _TOKEN, _CHAT_ID
     _TOKEN = token
     _CHAT_ID = chat_id
+    if token and chat_id:
+        # Log a masked fingerprint so you can confirm THIS bot is posting to the
+        # dedicated AVAX chat — and not sharing a token/chat with another bot.
+        bot_id = token.split(":", 1)[0]
+        LOG.info("telegram_target", extra={"bot_id": bot_id, "chat_id": chat_id})
+    else:
+        LOG.info("telegram_disabled")
 
 
 def _post(text: str) -> None:

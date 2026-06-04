@@ -96,7 +96,7 @@ class Bot8Runner:
             exit_price = float(df["close"].iloc[-1])
             entry = self._strat.state.entry_price
             side = self._strat.state.position
-            qty = signal.qty
+            qty = self._strat.state.entry_qty
             pnl = (exit_price - entry) * qty if side == "long" else (entry - exit_price) * qty
             close_trade(self._db, self._open_trade_id, exit_price, pnl)
             self._strat.state.on_close(pnl)
@@ -126,7 +126,7 @@ class Bot8Runner:
 
         # Close existing position first if flipping
         if position.side != "none":
-            await self._ex.close_position(position.side)
+            await self._ex.close_position(position.side, position.qty)
             if self._open_trade_id:
                 exit_price = signal.price
                 entry = self._strat.state.entry_price
@@ -145,6 +145,7 @@ class Bot8Runner:
             )
             self._strat.state.position = "long"
             self._strat.state.entry_price = signal.price
+            self._strat.state.entry_qty = signal.qty
             if self._strat.state.win_streak >= self._strat.am_stk_min:
                 self._strat.state.consec_3x += 1
             await telegram.notify_trade("long", signal.qty, signal.price, signal.sl_price, signal.tp_price)
@@ -156,6 +157,7 @@ class Bot8Runner:
             )
             self._strat.state.position = "short"
             self._strat.state.entry_price = signal.price
+            self._strat.state.entry_qty = signal.qty
             if self._strat.state.win_streak >= self._strat.am_stk_min:
                 self._strat.state.consec_3x += 1
             await telegram.notify_trade("short", signal.qty, signal.price, signal.sl_price, signal.tp_price)

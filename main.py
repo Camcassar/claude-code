@@ -82,6 +82,7 @@ async def _run(cfg: dict) -> None:
         api_key=api_key,
         api_secret=api_secret,
         symbol=cfg["exchange"]["symbol"],
+        leverage=cfg["exchange"].get("leverage", 3),
     )
 
     strat_cfg = cfg["strategy"]

@@ -48,8 +48,9 @@ class Position:
 
 
 class BybitConnector:
-    def __init__(self, api_key: str, api_secret: str, symbol: str = "AVAX/USDT") -> None:
+    def __init__(self, api_key: str, api_secret: str, symbol: str = "AVAX/USDT", leverage: float = 3.0) -> None:
         self.symbol = symbol
+        self.leverage = leverage
         self._ex = _BybitLinearOnly({
             "apiKey": api_key,
             "secret": api_secret,
@@ -63,7 +64,20 @@ class BybitConnector:
 
     async def connect(self) -> None:
         await _with_backoff(lambda: self._ex.load_markets())
-        LOG.info("bybit_connected", extra={"symbol": self.symbol})
+        await self._set_leverage()
+        LOG.info("bybit_connected", extra={"symbol": self.symbol, "leverage": self.leverage})
+
+    async def _set_leverage(self) -> None:
+        """Best-effort: pin leverage so win-streak-sized orders aren't margin-rejected.
+
+        Bybit raises 'leverage not modified' (110043) if it's already set to the
+        same value — that's not an error for us, so swallow it.
+        """
+        try:
+            await self._ex.set_leverage(self.leverage, self.symbol)
+            LOG.info("leverage_set", extra={"symbol": self.symbol, "leverage": self.leverage})
+        except ccxt.BaseError as e:
+            LOG.warning("leverage_set_skipped", extra={"error": str(e)})
 
     async def close(self) -> None:
         await self._ex.close()
@@ -91,16 +105,19 @@ class BybitConnector:
                 )
         return Position(side="none", qty=0.0, entry_price=0.0, unrealised_pnl=0.0)
 
-    async def close_position(self, side: str) -> dict:
+    async def close_position(self, side: str, qty: float) -> dict:
+        if qty <= 0:
+            LOG.warning("close_position_skipped_zero_qty", extra={"side": side})
+            return {}
         close_side = "sell" if side == "long" else "buy"
         order = await _with_backoff(lambda: self._ex.create_order(
             symbol=self.symbol,
             type="market",
             side=close_side,
-            amount=0,
-            params={"reduceOnly": True, "closeOnTrigger": True},
+            amount=qty,
+            params={"reduceOnly": True},
         ))
-        LOG.info("position_closed", extra={"side": side, "order": order.get("id")})
+        LOG.info("position_closed", extra={"side": side, "qty": qty, "order": order.get("id")})
         return order
 
     async def enter_long(self, qty: float, sl: float, tp: float) -> dict:
