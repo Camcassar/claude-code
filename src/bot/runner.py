@@ -46,7 +46,7 @@ class Bot8Runner:
         await self._ex.connect()
         self._running = True
         LOG.info("bot8_started")
-        telegram.send("🚀 <b>Bot 8 — AVAX Spectral running</b>\nConnected to Bybit | AVAX/USDT Perp | 3x | 30m bars")
+        await telegram.send("🚀 <b>Bot 8 — AVAX Spectral running</b>\nConnected to Bybit | AVAX/USDT Perp | 3x | 30m bars")
         await self._loop()
 
     async def stop(self) -> None:
@@ -88,7 +88,7 @@ class Bot8Runner:
             },
         )
 
-        telegram.notify_tick(signal.action, signal.centroid, signal.is_trending, balance, position.side)
+        await telegram.notify_tick(signal.action, signal.centroid, signal.is_trending, balance, position.side)
         snapshot_equity(self._db, balance)
 
         # Check if existing position hit SL/TP (position closed by exchange)
@@ -102,7 +102,24 @@ class Bot8Runner:
             self._strat.state.on_close(pnl)
             self._open_trade_id = None
             LOG.info("trade_closed_by_exchange", extra={"pnl": round(pnl, 2)})
-            telegram.notify_close(side, pnl)
+            await telegram.notify_close(side, pnl)
+
+        # Daily summary — fires once per day at first bar on or after 09:00 UTC
+        now_utc = datetime.now(timezone.utc)
+        if now_utc.hour >= 9 and now_utc.day != self._last_summary_day:
+            self._last_summary_day = now_utc.day
+            today_str = now_utc.strftime("%Y-%m-%d")
+            daily = fetch_daily_stats(self._db, today_str)
+            stats = fetch_trade_stats(self._db)
+            await telegram.notify_daily_summary(
+                balance=balance,
+                position=position.side,
+                today_trades=daily["total"],
+                today_pnl=daily["pnl"],
+                total_trades=stats.get("total", 0),
+                win_rate=stats.get("win_rate", 0.0),
+                total_pnl=stats.get("total_pnl", 0.0),
+            )
 
         if signal.action == "hold":
             return
@@ -130,7 +147,7 @@ class Bot8Runner:
             self._strat.state.entry_price = signal.price
             if self._strat.state.win_streak >= self._strat.am_stk_min:
                 self._strat.state.consec_3x += 1
-            telegram.notify_trade("long", signal.qty, signal.price, signal.sl_price, signal.tp_price)
+            await telegram.notify_trade("long", signal.qty, signal.price, signal.sl_price, signal.tp_price)
 
         elif signal.action in ("short", "sell"):
             await self._ex.enter_short(signal.qty, signal.sl_price, signal.tp_price)
@@ -141,21 +158,4 @@ class Bot8Runner:
             self._strat.state.entry_price = signal.price
             if self._strat.state.win_streak >= self._strat.am_stk_min:
                 self._strat.state.consec_3x += 1
-            telegram.notify_trade("short", signal.qty, signal.price, signal.sl_price, signal.tp_price)
-
-        # Daily summary — fires once per day at first bar on or after 09:00 UTC
-        now_utc = datetime.now(timezone.utc)
-        if now_utc.hour >= 9 and now_utc.day != self._last_summary_day:
-            self._last_summary_day = now_utc.day
-            today_str = now_utc.strftime("%Y-%m-%d")
-            daily = fetch_daily_stats(self._db, today_str)
-            stats = fetch_trade_stats(self._db)
-            telegram.notify_daily_summary(
-                balance=balance,
-                position=position.side,
-                today_trades=daily["total"],
-                today_pnl=daily["pnl"],
-                total_trades=stats.get("total", 0),
-                win_rate=stats.get("win_rate", 0.0),
-                total_pnl=stats.get("total_pnl", 0.0),
-            )
+            await telegram.notify_trade("short", signal.qty, signal.price, signal.sl_price, signal.tp_price)

@@ -1,6 +1,7 @@
 """Telegram notifications for Bot 8 — AVAX Spectral."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import requests
 
@@ -16,20 +17,25 @@ def init(token: str, chat_id: str) -> None:
     _CHAT_ID = chat_id
 
 
-def send(text: str) -> None:
+def _post(text: str) -> None:
+    """Blocking HTTP call — must be run in a thread executor."""
+    requests.post(
+        f"https://api.telegram.org/bot{_TOKEN}/sendMessage",
+        json={"chat_id": _CHAT_ID, "text": text, "parse_mode": "HTML"},
+        timeout=6,
+    )
+
+
+async def send(text: str) -> None:
     if not _TOKEN or not _CHAT_ID:
         return
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{_TOKEN}/sendMessage",
-            json={"chat_id": _CHAT_ID, "text": text, "parse_mode": "HTML"},
-            timeout=6,
-        )
+        await asyncio.to_thread(_post, text)
     except Exception as e:
         LOG.warning("telegram_send_failed", extra={"error": str(e)})
 
 
-def notify_tick(action: str, centroid: float, trending: bool, balance: float, position: str) -> None:
+async def notify_tick(action: str, centroid: float, trending: bool, balance: float, position: str) -> None:
     trending_str = "✅ Trending" if trending else "〰️ Choppy"
     action_emoji = {
         "buy": "🟢 LONG ENTRY",
@@ -39,7 +45,7 @@ def notify_tick(action: str, centroid: float, trending: bool, balance: float, po
         "hold": "⏸ Hold",
     }.get(action, action.upper())
 
-    send(
+    await send(
         f"<b>Bot 8 — AVAX Spectral</b>\n"
         f"━━━━━━━━━━━━━━━\n"
         f"Signal: {action_emoji}\n"
@@ -49,9 +55,9 @@ def notify_tick(action: str, centroid: float, trending: bool, balance: float, po
     )
 
 
-def notify_trade(side: str, qty: float, price: float, sl: float, tp: float) -> None:
+async def notify_trade(side: str, qty: float, price: float, sl: float, tp: float) -> None:
     emoji = "🟢" if side == "long" else "🔴"
-    send(
+    await send(
         f"{emoji} <b>Trade Opened — {side.upper()}</b>\n"
         f"━━━━━━━━━━━━━━━\n"
         f"Qty: {qty:.3f} AVAX @ ${price:.4f}\n"
@@ -60,7 +66,7 @@ def notify_trade(side: str, qty: float, price: float, sl: float, tp: float) -> N
     )
 
 
-def notify_daily_summary(
+async def notify_daily_summary(
     balance: float,
     position: str,
     today_trades: int,
@@ -73,7 +79,7 @@ def notify_daily_summary(
     date_str = datetime.now(timezone.utc).strftime("%a %d %b %Y")
     today_pnl_str = f"{'+'if today_pnl>=0 else ''}{today_pnl:.2f}"
     total_pnl_str = f"{'+'if total_pnl>=0 else ''}{total_pnl:.2f}"
-    send(
+    await send(
         f"<b>Daily Summary — Bot 8 AVAX</b>\n"
         f"📅 {date_str}\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -85,9 +91,9 @@ def notify_daily_summary(
     )
 
 
-def notify_close(side: str, pnl: float) -> None:
+async def notify_close(side: str, pnl: float) -> None:
     emoji = "✅" if pnl >= 0 else "❌"
-    send(
+    await send(
         f"{emoji} <b>Trade Closed</b>\n"
         f"━━━━━━━━━━━━━━━\n"
         f"Side: {side.upper()}\n"

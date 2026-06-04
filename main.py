@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 import os
 import signal
@@ -41,6 +42,27 @@ def _load_config(argv: list[str]) -> dict:
     if not p.exists():
         raise FileNotFoundError(f"config not found: {p}")
     return yaml.safe_load(p.read_text())
+
+
+_lock_fd: int | None = None
+
+
+def _acquire_lock() -> None:
+    """Exclusive flock so only one bot8 instance can run at a time."""
+    global _lock_fd
+    lock_path = PROJECT_ROOT / "logs" / "bot8.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY)
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(
+            "Bot 8 is already running — only one instance allowed. "
+            "Stop the existing process before starting a new one.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    os.write(_lock_fd, str(os.getpid()).encode())
 
 
 def _guard_live() -> None:
@@ -107,6 +129,7 @@ def main() -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
+    _acquire_lock()
     _guard_live()
 
     try:
