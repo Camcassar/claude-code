@@ -21,6 +21,7 @@ from bot.runner import Bot8Runner             # noqa: E402
 from bot.strategy import AvaxSpectralStrategy # noqa: E402
 from bot import telegram                      # noqa: E402
 
+(PROJECT_ROOT / "logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
