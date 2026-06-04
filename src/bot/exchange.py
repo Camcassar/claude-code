@@ -58,6 +58,7 @@ class BybitConnector:
                 "fetchMarkets": {"types": ["linear"]},
             },
             "enableRateLimit": True,
+            "adjustForTimeDifference": True,
         })
 
     async def connect(self) -> None:
