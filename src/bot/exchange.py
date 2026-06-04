@@ -27,6 +27,7 @@ class BybitConnector:
             "secret": api_secret,
             "options": {"defaultType": "linear"},
             "enableRateLimit": True,
+            "adjustForTimeDifference": True,
         })
 
     async def connect(self) -> None:
