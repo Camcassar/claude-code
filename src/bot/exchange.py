@@ -48,9 +48,13 @@ class BybitConnector:
         })
 
     async def connect(self) -> None:
-        # Bybit's /v5/asset/coin/query-info is geo-blocked from US/EU servers (CloudFront 403).
-        # Skipping fetchCurrencies stops the crash loop without affecting trading functionality.
+        # /v5/asset/coin/query-info is geo-blocked by Bybit's CloudFront from non-Asian IPs.
+        # Patch fetch_currencies to a no-op so load_markets never calls the blocked endpoint.
+        async def _noop_fetch_currencies(params: dict = {}) -> dict:
+            return {}
+        self._ex.fetch_currencies = _noop_fetch_currencies  # type: ignore[method-assign]
         self._ex.has["fetchCurrencies"] = False
+
         await _with_backoff(lambda: self._ex.load_markets())
         LOG.info("bybit_connected", extra={"symbol": self.symbol})
 
