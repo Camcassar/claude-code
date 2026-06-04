@@ -29,6 +29,12 @@ async def _with_backoff(fn: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
             await asyncio.sleep(delay)
 
 
+class _BybitNoGeoBlock(ccxt.bybit):
+    """bybit subclass that skips fetch_currencies — geo-blocked on Railway's US servers."""
+    async def fetch_currencies(self, params: dict = {}) -> dict:
+        return {}
+
+
 @dataclass
 class Position:
     side: str        # "long" | "short" | "none"
@@ -40,7 +46,7 @@ class Position:
 class BybitConnector:
     def __init__(self, api_key: str, api_secret: str, symbol: str = "AVAX/USDT") -> None:
         self.symbol = symbol
-        self._ex = ccxt.bybit({
+        self._ex = _BybitNoGeoBlock({
             "apiKey": api_key,
             "secret": api_secret,
             "options": {"defaultType": "linear"},
@@ -48,13 +54,6 @@ class BybitConnector:
         })
 
     async def connect(self) -> None:
-        # /v5/asset/coin/query-info is geo-blocked by Bybit's CloudFront from non-Asian IPs.
-        # Patch fetch_currencies to a no-op so load_markets never calls the blocked endpoint.
-        async def _noop_fetch_currencies(params: dict = {}) -> dict:
-            return {}
-        self._ex.fetch_currencies = _noop_fetch_currencies  # type: ignore[method-assign]
-        self._ex.has["fetchCurrencies"] = False
-
         await _with_backoff(lambda: self._ex.load_markets())
         LOG.info("bybit_connected", extra={"symbol": self.symbol})
 
