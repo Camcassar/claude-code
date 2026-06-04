@@ -29,10 +29,18 @@ async def _with_backoff(fn: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
             await asyncio.sleep(delay)
 
 
-class _BybitNoGeoBlock(ccxt.bybit):
-    """bybit subclass that skips fetch_currencies — geo-blocked on Railway's US servers."""
+class _BybitLinearOnly(ccxt.bybit):
+    """bybit subclass that skips geo-blocked endpoints on Railway's US servers.
+
+    Bybit's CloudFront blocks /v5/asset/coin/query-info (currencies) and
+    /v5/market/instruments-info?category=option from non-Asian IPs.
+    We only trade linear perps so neither endpoint is needed.
+    """
     async def fetch_currencies(self, params: dict = {}) -> dict:
         return {}
+
+    async def fetch_option_markets(self, params: dict = {}) -> list:
+        return []
 
 
 @dataclass
@@ -46,10 +54,13 @@ class Position:
 class BybitConnector:
     def __init__(self, api_key: str, api_secret: str, symbol: str = "AVAX/USDT") -> None:
         self.symbol = symbol
-        self._ex = _BybitNoGeoBlock({
+        self._ex = _BybitLinearOnly({
             "apiKey": api_key,
             "secret": api_secret,
-            "options": {"defaultType": "linear"},
+            "options": {
+                "defaultType": "linear",
+                "fetchMarkets": {"types": ["linear"]},
+            },
             "enableRateLimit": True,
         })
 
