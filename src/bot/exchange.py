@@ -30,17 +30,13 @@ async def _with_backoff(fn: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
 
 
 class _BybitLinearOnly(ccxt.bybit):
-    """bybit subclass that only loads linear (perp) markets.
+    """bybit subclass that skips geo-blocked endpoints on Railway's US servers.
 
-    Railway's US servers are geo-blocked by Bybit CloudFront for every market
-    category except linear, and for the currencies endpoint. We only trade
-    linear perps so none of the blocked endpoints are needed.
+    Bybit CloudFront blocks /v5/asset/coin/query-info from non-Asian IPs.
+    fetch_markets is restricted to linear-only via fetchMarkets.types option.
     """
     async def fetch_currencies(self, params: dict = {}) -> dict:
         return {}
-
-    async def fetch_markets(self, params: dict = {}) -> list:
-        return await self.fetch_linear_markets(params)
 
 
 @dataclass
