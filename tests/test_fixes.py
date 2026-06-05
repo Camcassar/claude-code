@@ -406,3 +406,60 @@ async def test_runner_submits_order_on_buy_signal():
         mock_ex.enter_long.assert_awaited_once_with(2.5, 19.5, 21.4)
         assert mock_strat.state.position == "long"
         assert mock_strat.state.entry_qty == 2.5
+
+
+# ---------------------------------------------------------------------------
+# Fix 9: startup reconciliation — pick up a live position after a restart
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_reconcile_picks_up_open_position():
+    """After a restart the bot must sync to the real exchange position."""
+    from bot.runner import Bot8Runner
+    from bot.strategy import AvaxSpectralStrategy
+    from bot.db import init_db
+
+    mock_ex = AsyncMock()
+    mock_ex.symbol = "AVAXUSDT"
+    mock_ex.fetch_position.return_value = MagicMock(
+        side="long", qty=3.0, entry_price=20.5, unrealised_pnl=0.0
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "trades.db"
+        init_db(db_path)
+        strat = AvaxSpectralStrategy()
+        runner = Bot8Runner(mock_ex, strat, db_path, Path(tmp) / ".kill")
+
+        with patch("bot.telegram.send", new_callable=AsyncMock):
+            await runner._reconcile_state()
+
+        assert strat.state.position == "long"
+        assert strat.state.entry_qty == 3.0
+        assert strat.state.entry_price == 20.5
+        assert runner._open_trade_id is not None  # so a later close is recorded
+
+
+@pytest.mark.asyncio
+async def test_reconcile_flat_when_no_position():
+    from bot.runner import Bot8Runner
+    from bot.strategy import AvaxSpectralStrategy
+    from bot.db import init_db
+
+    mock_ex = AsyncMock()
+    mock_ex.symbol = "AVAXUSDT"
+    mock_ex.fetch_position.return_value = MagicMock(
+        side="none", qty=0.0, entry_price=0.0, unrealised_pnl=0.0
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "trades.db"
+        init_db(db_path)
+        strat = AvaxSpectralStrategy()
+        strat.state.position = "long"  # stale RAM value to be corrected
+        runner = Bot8Runner(mock_ex, strat, db_path, Path(tmp) / ".kill")
+
+        await runner._reconcile_state()
+
+        assert strat.state.position == "flat"
+        assert runner._open_trade_id is None

@@ -74,10 +74,48 @@ class Bot8Runner:
             # Throttle the Railway crash-restart loop so you don't get spammed.
             await asyncio.sleep(600)
             raise
+        await self._reconcile_state()
         self._running = True
         LOG.info("bot8_started")
         await telegram.send("🚀 <b>Bot 8 — AVAX Spectral running</b>\nConnected to Bybit | AVAX/USDT Perp | 3x | 30m bars")
         await self._loop()
+
+    async def _reconcile_state(self) -> None:
+        """Sync in-memory state to the real exchange position on startup.
+
+        The bot's position/streak live in RAM and are lost on every Railway
+        redeploy, but the live Bybit position (and its SL/TP) survive. Without
+        this, after a restart the bot thinks it's flat while a position is open —
+        so it can't detect that position closing, and its accounting desyncs.
+        """
+        try:
+            pos = await self._ex.fetch_position()
+        except Exception:
+            LOG.exception("reconcile_failed")  # non-fatal; first tick will refetch
+            return
+
+        if pos.side in ("long", "short") and pos.qty > 0:
+            self._strat.state.position = pos.side
+            self._strat.state.entry_price = pos.entry_price
+            self._strat.state.entry_qty = pos.qty
+            # Re-open a DB row so a later SL/TP close is still recorded + alerted.
+            self._open_trade_id = open_trade(
+                self._db, self._ex.symbol, pos.side, pos.qty, pos.entry_price
+            )
+            LOG.info(
+                "reconciled_open_position",
+                extra={"side": pos.side, "qty": pos.qty, "entry": pos.entry_price},
+            )
+            await telegram.send(
+                f"♻️ <b>Bot 8 — resumed after restart</b>\n"
+                f"Picked up your open {pos.side.upper()} {pos.qty} AVAX "
+                f"@ ${pos.entry_price:.4f} — now tracking it again."
+            )
+        else:
+            self._strat.state.position = "flat"
+            self._strat.state.entry_price = 0.0
+            self._strat.state.entry_qty = 0.0
+            LOG.info("reconciled_flat")
 
     async def stop(self) -> None:
         self._running = False
