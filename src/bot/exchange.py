@@ -51,6 +51,8 @@ class BybitConnector:
     def __init__(self, api_key: str, api_secret: str, symbol: str = "AVAX/USDT", leverage: float = 3.0, testnet: bool = False) -> None:
         self.symbol = symbol
         self.leverage = leverage
+        self._key = api_key
+        self._secret = api_secret
         self._ex = _BybitLinearOnly({
             "apiKey": api_key,
             "secret": api_secret,
@@ -80,12 +82,31 @@ class BybitConnector:
         try:
             await _with_backoff(lambda: self._ex.fetch_balance({"type": "unified"}))
         except ccxt.AuthenticationError as e:
+            self._log_credential_fingerprint()
             raise ccxt.AuthenticationError(
                 "Bybit rejected the API credentials (error 10004 — signature). "
-                "The API KEY is recognised but the SECRET doesn't match: check "
-                "BYBIT_API_SECRET in Railway for a wrong value, a stray space/newline, "
-                f"or key/secret swapped. Bybit said: {e}"
+                "The API KEY is recognised but the SECRET doesn't match. See the "
+                "credential_fingerprint log line just above: if *_has_ws is true or "
+                "secret_len isn't what Bybit shows, the value in Railway is "
+                "corrupted (stray quote/space/newline) even if it looks right. "
+                f"Bybit said: {e}"
             ) from e
+
+    def _log_credential_fingerprint(self) -> None:
+        """Log a SAFE fingerprint of the creds (never the secret itself) so a
+        malformed env var (whitespace, quotes) is visible without guessing."""
+        k, s = self._key or "", self._secret or ""
+        LOG.error(
+            "credential_fingerprint",
+            extra={
+                "key_len": len(k),
+                "key_has_ws": k != k.strip(),
+                "key_has_quotes": k.startswith(("'", '"')) or k.endswith(("'", '"')),
+                "secret_len": len(s),
+                "secret_has_ws": s != s.strip(),
+                "secret_has_quotes": s.startswith(("'", '"')) or s.endswith(("'", '"')),
+            },
+        )
 
     async def _set_leverage(self) -> None:
         """Best-effort: pin leverage so win-streak-sized orders aren't margin-rejected.
