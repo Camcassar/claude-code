@@ -325,3 +325,84 @@ async def test_daily_summary_fires_on_hold_tick():
             await runner._tick()
 
         assert summary_calls == ["fired"], "Daily summary did not fire on a hold tick"
+
+
+# ---------------------------------------------------------------------------
+# Fix 8: PROOF IT TRADES — signal fires on a real EMA cross, runner submits order
+# ---------------------------------------------------------------------------
+
+def test_strategy_emits_buy_on_ema_cross_in_trend():
+    """Engineer a genuine fast-over-slow EMA cross; strategy must return 'buy'."""
+    import numpy as np
+    import pandas as pd
+    from bot.strategy import AvaxSpectralStrategy
+
+    n = 400
+    t = np.arange(n)
+    close = pd.Series(100 + 10 * np.sin(t / 15.0))  # oscillates -> many EMA crosses
+    ema_f = close.ewm(span=20, adjust=False).mean()
+    ema_s = close.ewm(span=60, adjust=False).mean()
+
+    # find the first up-cross after enough warmup (need >=200 bars for ref_atr)
+    cross_idx = next(
+        i for i in range(205, n)
+        if ema_f.iloc[i] > ema_s.iloc[i] and ema_f.iloc[i - 1] <= ema_s.iloc[i - 1]
+    )
+
+    df = pd.DataFrame({"open": close, "high": close, "low": close, "close": close, "volume": 1.0})
+    df = df.iloc[: cross_idx + 1]  # last bar IS the cross bar
+
+    # tc_thresh=0 isolates the cross logic (market always counts as trending)
+    strat = AvaxSpectralStrategy(tc_thresh=0.0, use_shorts=True)
+    sig = strat.evaluate(df, equity=100.0)
+
+    assert sig.action == "buy", f"expected buy on up-cross, got {sig.action}"
+    assert sig.qty > 0
+    assert sig.sl_price < sig.price < sig.tp_price  # long SL below, TP above
+
+
+@pytest.mark.asyncio
+async def test_runner_submits_order_on_buy_signal():
+    """When the strategy says buy, the runner must actually call enter_long."""
+    import pandas as pd
+    from datetime import datetime, timezone
+    from bot.runner import Bot8Runner
+    from bot.strategy import Signal
+    from bot.db import init_db
+
+    mock_ex = AsyncMock()
+    mock_ex.symbol = "AVAXUSDT"
+    mock_ex.fetch_ohlcv.return_value = pd.DataFrame(
+        {"open": [20.0], "high": [20.0], "low": [20.0], "close": [20.0], "volume": [1.0]},
+        index=pd.to_datetime(["2026-06-04 09:30:00"], utc=True),
+    )
+    mock_ex.fetch_position.return_value = MagicMock(side="none", qty=0.0, entry_price=0.0)
+    mock_ex.fetch_balance.return_value = 100.0
+
+    mock_strat = MagicMock()
+    mock_strat.am_stk_min = 2
+    mock_strat.state.position = "flat"
+    mock_strat.state.win_streak = 0
+    mock_strat.evaluate.return_value = Signal(
+        action="buy", qty=2.5, price=20.0, sl_price=19.5, tp_price=21.4,
+        centroid=99.0, is_trending=True,
+    )
+
+    fixed_now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=timezone.utc)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "trades.db"
+        init_db(db_path)
+        runner = Bot8Runner(mock_ex, mock_strat, db_path, Path(tmp) / ".kill")
+
+        with patch("bot.telegram.send", new_callable=AsyncMock), \
+             patch("bot.telegram.notify_tick", new_callable=AsyncMock), \
+             patch("bot.telegram.notify_trade", new_callable=AsyncMock), \
+             patch("bot.telegram.notify_daily_summary", new_callable=AsyncMock), \
+             patch("bot.runner.datetime") as mock_dt:
+            mock_dt.now.return_value = fixed_now
+            await runner._tick()
+
+        mock_ex.enter_long.assert_awaited_once_with(2.5, 19.5, 21.4)
+        assert mock_strat.state.position == "long"
+        assert mock_strat.state.entry_qty == 2.5
