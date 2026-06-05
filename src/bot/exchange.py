@@ -48,8 +48,11 @@ class Position:
 
 
 class BybitConnector:
-    def __init__(self, api_key: str, api_secret: str, symbol: str = "AVAX/USDT") -> None:
+    def __init__(self, api_key: str, api_secret: str, symbol: str = "AVAX/USDT", leverage: float = 3.0, testnet: bool = False) -> None:
         self.symbol = symbol
+        self.leverage = leverage
+        self._key = api_key
+        self._secret = api_secret
         self._ex = _BybitLinearOnly({
             "apiKey": api_key,
             "secret": api_secret,
@@ -60,10 +63,62 @@ class BybitConnector:
             "enableRateLimit": True,
             "adjustForTimeDifference": True,
         })
+        if testnet:
+            self._ex.set_sandbox_mode(True)
 
     async def connect(self) -> None:
         await _with_backoff(lambda: self._ex.load_markets())
-        LOG.info("bybit_connected", extra={"symbol": self.symbol})
+        await self.verify_auth()
+        await self._set_leverage()
+        LOG.info("bybit_connected", extra={"symbol": self.symbol, "leverage": self.leverage})
+
+    async def verify_auth(self) -> None:
+        """Authenticated probe so bad API keys fail LOUDLY at startup.
+
+        load_markets/fetch_ohlcv are public and succeed even with bad keys, which
+        is exactly why a wrong secret hid for hours: the bot 'connected' but every
+        private call (positions, orders) died with Bybit 10004 'error sign'.
+        """
+        try:
+            await _with_backoff(lambda: self._ex.fetch_balance({"type": "unified"}))
+        except ccxt.AuthenticationError as e:
+            self._log_credential_fingerprint()
+            raise ccxt.AuthenticationError(
+                "Bybit rejected the API credentials (error 10004 — signature). "
+                "The API KEY is recognised but the SECRET doesn't match. See the "
+                "credential_fingerprint log line just above: if *_has_ws is true or "
+                "secret_len isn't what Bybit shows, the value in Railway is "
+                "corrupted (stray quote/space/newline) even if it looks right. "
+                f"Bybit said: {e}"
+            ) from e
+
+    def _log_credential_fingerprint(self) -> None:
+        """Log a SAFE fingerprint of the creds (never the secret itself) so a
+        malformed env var (whitespace, quotes) is visible without guessing."""
+        k, s = self._key or "", self._secret or ""
+        LOG.error(
+            "credential_fingerprint",
+            extra={
+                "key_len": len(k),
+                "key_has_ws": k != k.strip(),
+                "key_has_quotes": k.startswith(("'", '"')) or k.endswith(("'", '"')),
+                "secret_len": len(s),
+                "secret_has_ws": s != s.strip(),
+                "secret_has_quotes": s.startswith(("'", '"')) or s.endswith(("'", '"')),
+            },
+        )
+
+    async def _set_leverage(self) -> None:
+        """Best-effort: pin leverage so win-streak-sized orders aren't margin-rejected.
+
+        Bybit raises 'leverage not modified' (110043) if it's already set to the
+        same value — that's not an error for us, so swallow it.
+        """
+        try:
+            await self._ex.set_leverage(self.leverage, self.symbol)
+            LOG.info("leverage_set", extra={"symbol": self.symbol, "leverage": self.leverage})
+        except ccxt.BaseError as e:
+            LOG.warning("leverage_set_skipped", extra={"error": str(e)})
 
     async def close(self) -> None:
         await self._ex.close()
@@ -73,7 +128,13 @@ class BybitConnector:
         df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         df = df.set_index("timestamp")
-        return df.iloc[:-1]  # drop in-progress bar
+        # Keep only bars that have FULLY closed. ccxt timestamps are bar-open
+        # times, so a bar opened at T closes at T + bar_secs. Selecting by time
+        # (not by position) is robust whether or not the exchange has yet
+        # produced the in-progress bar — so we never drop the bar we want.
+        bar_secs = self._ex.parse_timeframe(timeframe)
+        closed = df.index + pd.Timedelta(seconds=bar_secs) <= pd.Timestamp.now(tz="UTC")
+        return df[closed]
 
     async def fetch_balance(self) -> float:
         bal = await _with_backoff(lambda: self._ex.fetch_balance({"type": "unified"}))
@@ -91,16 +152,19 @@ class BybitConnector:
                 )
         return Position(side="none", qty=0.0, entry_price=0.0, unrealised_pnl=0.0)
 
-    async def close_position(self, side: str) -> dict:
+    async def close_position(self, side: str, qty: float) -> dict:
+        if qty <= 0:
+            LOG.warning("close_position_skipped_zero_qty", extra={"side": side})
+            return {}
         close_side = "sell" if side == "long" else "buy"
         order = await _with_backoff(lambda: self._ex.create_order(
             symbol=self.symbol,
             type="market",
             side=close_side,
-            amount=0,
-            params={"reduceOnly": True, "closeOnTrigger": True},
+            amount=qty,
+            params={"reduceOnly": True},
         ))
-        LOG.info("position_closed", extra={"side": side, "order": order.get("id")})
+        LOG.info("position_closed", extra={"side": side, "qty": qty, "order": order.get("id")})
         return order
 
     async def enter_long(self, qty: float, sl: float, tp: float) -> dict:

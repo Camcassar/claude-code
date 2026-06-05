@@ -32,10 +32,12 @@ class StrategyState:
     consec_3x: int = 0
     position: Literal["long", "short", "flat"] = "flat"
     entry_price: float = 0.0
+    entry_qty: float = 0.0
 
     def on_close(self, pnl: float) -> None:
         self.position = "flat"
         self.entry_price = 0.0
+        self.entry_qty = 0.0
         if pnl > 0:
             self.win_streak += 1
         else:

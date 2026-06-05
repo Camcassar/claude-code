@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+
 import requests
 
 LOG = logging.getLogger("bot8.telegram")
@@ -10,20 +12,44 @@ LOG = logging.getLogger("bot8.telegram")
 _TOKEN = ""
 _CHAT_ID = ""
 
+_SEND_RETRIES = 3      # don't let a transient blip silently drop a message
+_SEND_TIMEOUT = 10     # seconds per attempt
+
 
 def init(token: str, chat_id: str) -> None:
     global _TOKEN, _CHAT_ID
     _TOKEN = token
     _CHAT_ID = chat_id
+    if token and chat_id:
+        # Log a masked fingerprint so you can confirm THIS bot is posting to the
+        # dedicated AVAX chat — and not sharing a token/chat with another bot.
+        bot_id = token.split(":", 1)[0]
+        LOG.info("telegram_target", extra={"bot_id": bot_id, "chat_id": chat_id})
+    else:
+        LOG.info("telegram_disabled")
 
 
 def _post(text: str) -> None:
-    """Blocking HTTP call — must be run in a thread executor."""
-    requests.post(
-        f"https://api.telegram.org/bot{_TOKEN}/sendMessage",
-        json={"chat_id": _CHAT_ID, "text": text, "parse_mode": "HTML"},
-        timeout=6,
-    )
+    """Blocking HTTP call — must be run in a thread executor.
+
+    Retries on network errors and non-200 responses so a transient blip doesn't
+    silently swallow a message (which is what made the feed look like it had
+    'missed' frames). Raises after the last attempt so send() can log it.
+    """
+    url = f"https://api.telegram.org/bot{_TOKEN}/sendMessage"
+    payload = {"chat_id": _CHAT_ID, "text": text, "parse_mode": "HTML"}
+    last_err: Exception | None = None
+    for attempt in range(_SEND_RETRIES):
+        try:
+            resp = requests.post(url, json=payload, timeout=_SEND_TIMEOUT)
+            if resp.status_code == 200:
+                return
+            last_err = RuntimeError(f"telegram HTTP {resp.status_code}: {resp.text[:200]}")
+        except requests.RequestException as e:
+            last_err = e
+        if attempt < _SEND_RETRIES - 1:
+            time.sleep(1.5 * (attempt + 1))  # off the event loop (runs in a thread)
+    raise last_err if last_err else RuntimeError("telegram send failed")
 
 
 async def send(text: str) -> None:

@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ccxt.base.errors import AuthenticationError
+
 from bot.db import close_trade, fetch_daily_stats, fetch_trade_stats, init_db, open_trade, snapshot_equity
 from bot.exchange import BybitConnector
 from bot.strategy import AvaxSpectralStrategy
@@ -17,12 +19,28 @@ LOG = logging.getLogger("bot8.runner")
 BAR_DELAY_SECS = 10
 BAR_SECONDS = 30 * 60  # 30-minute bars
 
+# If the just-closed bar isn't on the exchange yet (lag), retry within the
+# window rather than waiting a whole bar. 8 x 20s = up to ~160s of cushion.
+FRESH_RETRIES = 8
+FRESH_RETRY_DELAY = 20
+
 
 def _next_bar_close(now: datetime) -> float:
     """Seconds until next 30m bar close + delay."""
     ts = now.timestamp()
     remainder = ts % BAR_SECONDS
     return (BAR_SECONDS - remainder) + BAR_DELAY_SECS
+
+
+def _expected_closed_open(now: datetime) -> "pd.Timestamp":
+    """Open-time of the bar that should have just closed at `now`.
+
+    At 12:30:10 the just-closed 30m bar opened at 12:00 — that's the row we
+    expect to be the last closed bar.
+    """
+    import pandas as pd
+    last_boundary = (now.timestamp() // BAR_SECONDS) * BAR_SECONDS
+    return pd.Timestamp(last_boundary - BAR_SECONDS, unit="s", tz="UTC")
 
 
 class Bot8Runner:
@@ -43,7 +61,19 @@ class Bot8Runner:
 
     async def start(self) -> None:
         init_db(self._db)
-        await self._ex.connect()
+        try:
+            await self._ex.connect()
+        except AuthenticationError as e:
+            LOG.error("auth_failed_on_start", extra={"error": str(e)})
+            await telegram.send(
+                "🛑 <b>Bot 8 — cannot start</b>\n"
+                "Bybit rejected your API key/secret (error 10004, signature).\n"
+                "Fix <b>BYBIT_API_SECRET</b> in Railway (wrong value or stray "
+                "space/newline) and redeploy. No trades will run until this is fixed."
+            )
+            # Throttle the Railway crash-restart loop so you don't get spammed.
+            await asyncio.sleep(600)
+            raise
         self._running = True
         LOG.info("bot8_started")
         await telegram.send("🚀 <b>Bot 8 — AVAX Spectral running</b>\nConnected to Bybit | AVAX/USDT Perp | 3x | 30m bars")
@@ -67,12 +97,53 @@ class Bot8Runner:
 
             try:
                 await self._tick()
+            except AuthenticationError as e:
+                LOG.error("auth_error_stopping", extra={"error": str(e)})
+                await telegram.send(
+                    "🛑 <b>Bot 8 — stopped</b>\n"
+                    "Bybit auth failed mid-run (signature/secret). Fix the API keys "
+                    "in Railway and redeploy."
+                )
+                await self.stop()
+                return
             except Exception:
                 LOG.exception("tick_error")
                 await asyncio.sleep(60)
 
-    async def _tick(self) -> None:
+    async def _fetch_fresh_ohlcv(self):
+        """Fetch closed bars, making sure the just-closed bar is actually present.
+
+        Returns (df, is_fresh). Retries within the bar window if the exchange is
+        lagging, so a few seconds of delay never costs us a frame.
+        """
+        expected = _expected_closed_open(datetime.now(timezone.utc))
         df = await self._ex.fetch_ohlcv()
+        for attempt in range(FRESH_RETRIES):
+            if len(df) and df.index[-1] >= expected:
+                return df, True
+            LOG.warning(
+                "stale_bar_retry",
+                extra={
+                    "have": str(df.index[-1]) if len(df) else "none",
+                    "want": str(expected),
+                    "attempt": attempt + 1,
+                },
+            )
+            await asyncio.sleep(FRESH_RETRY_DELAY)
+            df = await self._ex.fetch_ohlcv()
+        return df, bool(len(df) and df.index[-1] >= expected)
+
+    async def _tick(self) -> None:
+        df, fresh = await self._fetch_fresh_ohlcv()
+        if not fresh:
+            have = str(df.index[-1]) if len(df) else "none"
+            LOG.error("stale_bar_giving_up", extra={"have": have})
+            await telegram.send(
+                "⚠️ <b>Bot 8 — frame skipped</b>\n"
+                "Bybit didn't return the just-closed 30m bar in time. "
+                "No trade this bar; will re-check at the next close."
+            )
+            return
         position = await self._ex.fetch_position()
         balance = await self._ex.fetch_balance()
         signal = self._strat.evaluate(df, equity=balance)
@@ -96,7 +167,7 @@ class Bot8Runner:
             exit_price = float(df["close"].iloc[-1])
             entry = self._strat.state.entry_price
             side = self._strat.state.position
-            qty = signal.qty
+            qty = self._strat.state.entry_qty
             pnl = (exit_price - entry) * qty if side == "long" else (entry - exit_price) * qty
             close_trade(self._db, self._open_trade_id, exit_price, pnl)
             self._strat.state.on_close(pnl)
@@ -126,7 +197,7 @@ class Bot8Runner:
 
         # Close existing position first if flipping
         if position.side != "none":
-            await self._ex.close_position(position.side)
+            await self._ex.close_position(position.side, position.qty)
             if self._open_trade_id:
                 exit_price = signal.price
                 entry = self._strat.state.entry_price
@@ -145,6 +216,7 @@ class Bot8Runner:
             )
             self._strat.state.position = "long"
             self._strat.state.entry_price = signal.price
+            self._strat.state.entry_qty = signal.qty
             if self._strat.state.win_streak >= self._strat.am_stk_min:
                 self._strat.state.consec_3x += 1
             await telegram.notify_trade("long", signal.qty, signal.price, signal.sl_price, signal.tp_price)
@@ -156,6 +228,7 @@ class Bot8Runner:
             )
             self._strat.state.position = "short"
             self._strat.state.entry_price = signal.price
+            self._strat.state.entry_qty = signal.qty
             if self._strat.state.win_streak >= self._strat.am_stk_min:
                 self._strat.state.consec_3x += 1
             await telegram.notify_trade("short", signal.qty, signal.price, signal.sl_price, signal.tp_price)

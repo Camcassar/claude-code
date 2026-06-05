@@ -5,6 +5,7 @@ bot:
 exchange:
   name: bybit
   symbol: "AVAX/USDT:USDT"
+  leverage: 3        # pinned on the symbol at startup (best-effort)
   # Keys loaded from env: BYBIT_API_KEY / BYBIT_API_SECRET
 
 strategy:
