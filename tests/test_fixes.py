@@ -235,6 +235,33 @@ async def test_telegram_send_is_non_blocking():
 
 
 @pytest.mark.asyncio
+async def test_telegram_post_retries_then_succeeds():
+    """A transient failure must NOT silently drop a message — _post retries."""
+    from bot import telegram
+
+    telegram.init(token="fake", chat_id="123")
+
+    calls = {"n": 0}
+
+    class _Resp:
+        status_code = 200
+        text = "ok"
+
+    def flaky_post(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            import requests
+            raise requests.RequestException("blip")
+        return _Resp()
+
+    with patch("bot.telegram.requests.post", side_effect=flaky_post), \
+         patch("bot.telegram.time.sleep"):  # don't actually wait
+        await telegram.send("hello")
+
+    assert calls["n"] == 3, "should retry until it gets through"
+
+
+@pytest.mark.asyncio
 async def test_telegram_send_skips_when_unconfigured():
     """send() must return immediately when token/chat_id are empty."""
     from bot import telegram
