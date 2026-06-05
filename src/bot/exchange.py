@@ -48,7 +48,7 @@ class Position:
 
 
 class BybitConnector:
-    def __init__(self, api_key: str, api_secret: str, symbol: str = "AVAX/USDT", leverage: float = 3.0) -> None:
+    def __init__(self, api_key: str, api_secret: str, symbol: str = "AVAX/USDT", leverage: float = 3.0, testnet: bool = False) -> None:
         self.symbol = symbol
         self.leverage = leverage
         self._ex = _BybitLinearOnly({
@@ -61,6 +61,8 @@ class BybitConnector:
             "enableRateLimit": True,
             "adjustForTimeDifference": True,
         })
+        if testnet:
+            self._ex.set_sandbox_mode(True)
 
     async def connect(self) -> None:
         await _with_backoff(lambda: self._ex.load_markets())
