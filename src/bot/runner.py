@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ccxt.base.errors import AuthenticationError
+
 from bot.db import close_trade, fetch_daily_stats, fetch_trade_stats, init_db, open_trade, snapshot_equity
 from bot.exchange import BybitConnector
 from bot.strategy import AvaxSpectralStrategy
@@ -59,7 +61,19 @@ class Bot8Runner:
 
     async def start(self) -> None:
         init_db(self._db)
-        await self._ex.connect()
+        try:
+            await self._ex.connect()
+        except AuthenticationError as e:
+            LOG.error("auth_failed_on_start", extra={"error": str(e)})
+            await telegram.send(
+                "🛑 <b>Bot 8 — cannot start</b>\n"
+                "Bybit rejected your API key/secret (error 10004, signature).\n"
+                "Fix <b>BYBIT_API_SECRET</b> in Railway (wrong value or stray "
+                "space/newline) and redeploy. No trades will run until this is fixed."
+            )
+            # Throttle the Railway crash-restart loop so you don't get spammed.
+            await asyncio.sleep(600)
+            raise
         self._running = True
         LOG.info("bot8_started")
         await telegram.send("🚀 <b>Bot 8 — AVAX Spectral running</b>\nConnected to Bybit | AVAX/USDT Perp | 3x | 30m bars")
@@ -83,6 +97,15 @@ class Bot8Runner:
 
             try:
                 await self._tick()
+            except AuthenticationError as e:
+                LOG.error("auth_error_stopping", extra={"error": str(e)})
+                await telegram.send(
+                    "🛑 <b>Bot 8 — stopped</b>\n"
+                    "Bybit auth failed mid-run (signature/secret). Fix the API keys "
+                    "in Railway and redeploy."
+                )
+                await self.stop()
+                return
             except Exception:
                 LOG.exception("tick_error")
                 await asyncio.sleep(60)

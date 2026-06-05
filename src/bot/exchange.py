@@ -64,8 +64,26 @@ class BybitConnector:
 
     async def connect(self) -> None:
         await _with_backoff(lambda: self._ex.load_markets())
+        await self.verify_auth()
         await self._set_leverage()
         LOG.info("bybit_connected", extra={"symbol": self.symbol, "leverage": self.leverage})
+
+    async def verify_auth(self) -> None:
+        """Authenticated probe so bad API keys fail LOUDLY at startup.
+
+        load_markets/fetch_ohlcv are public and succeed even with bad keys, which
+        is exactly why a wrong secret hid for hours: the bot 'connected' but every
+        private call (positions, orders) died with Bybit 10004 'error sign'.
+        """
+        try:
+            await _with_backoff(lambda: self._ex.fetch_balance({"type": "unified"}))
+        except ccxt.AuthenticationError as e:
+            raise ccxt.AuthenticationError(
+                "Bybit rejected the API credentials (error 10004 — signature). "
+                "The API KEY is recognised but the SECRET doesn't match: check "
+                "BYBIT_API_SECRET in Railway for a wrong value, a stray space/newline, "
+                f"or key/secret swapped. Bybit said: {e}"
+            ) from e
 
     async def _set_leverage(self) -> None:
         """Best-effort: pin leverage so win-streak-sized orders aren't margin-rejected.
