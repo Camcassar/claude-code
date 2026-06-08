@@ -101,7 +101,12 @@ async def _run(cfg: dict) -> None:
         max_consec_3x=size_cfg["max_consec_3x"],
     )
 
-    db_path = PROJECT_ROOT / cfg["persistence"]["db_path"]
+    # DB path: BOT8_DB_PATH (absolute) lets you point at a Railway volume so the
+    # trade/equity history survives redeploys. Falls back to the in-repo path.
+    db_cfg = os.getenv("BOT8_DB_PATH", cfg["persistence"]["db_path"])
+    db_path = Path(db_cfg)
+    if not db_path.is_absolute():
+        db_path = PROJECT_ROOT / db_path
     kill_switch = PROJECT_ROOT / "logs" / ".kill_switch"
 
     runner = Bot8Runner(
