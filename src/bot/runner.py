@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ccxt.base.errors import AuthenticationError
+from ccxt.base.errors import AuthenticationError, PermissionDenied
 
 from bot.db import close_trade, fetch_daily_stats, fetch_trade_stats, init_db, open_trade, snapshot_equity
 from bot.exchange import BybitConnector
@@ -74,6 +74,16 @@ class Bot8Runner:
             # Throttle the Railway crash-restart loop so you don't get spammed.
             await asyncio.sleep(600)
             raise
+        except PermissionDenied as e:
+            LOG.error("permission_failed_on_start", extra={"error": str(e)})
+            await telegram.send(
+                "🛑 <b>Bot 8 — can't trade</b>\n"
+                "Reads work, but your API key can't place orders (Read-Only / no "
+                "trade permission). In Bybit give the key <b>Unified Trading - Trade</b> "
+                "with Read-Write, then redeploy. It will signal but never fill until fixed."
+            )
+            await asyncio.sleep(600)
+            raise
         await self._reconcile_state()
         self._running = True
         LOG.info("bot8_started")
@@ -135,12 +145,14 @@ class Bot8Runner:
 
             try:
                 await self._tick()
-            except AuthenticationError as e:
+            except (AuthenticationError, PermissionDenied) as e:
                 LOG.error("auth_error_stopping", extra={"error": str(e)})
                 await telegram.send(
                     "🛑 <b>Bot 8 — stopped</b>\n"
-                    "Bybit auth failed mid-run (signature/secret). Fix the API keys "
-                    "in Railway and redeploy."
+                    "Bybit rejected an order mid-run. Reads were working, so the most "
+                    "likely cause is the API key being Read-Only or lacking trade "
+                    "permission. Check the key in Bybit (Unified Trading - Trade, "
+                    "Read-Write), then redeploy."
                 )
                 await self.stop()
                 return
