@@ -69,8 +69,32 @@ class BybitConnector:
     async def connect(self) -> None:
         await _with_backoff(lambda: self._ex.load_markets())
         await self.verify_auth()
+        await self._check_trade_permission()
         await self._set_leverage()
         LOG.info("bybit_connected", extra={"symbol": self.symbol, "leverage": self.leverage})
+
+    async def _check_trade_permission(self) -> None:
+        """Confirm the key can actually place orders — not just read.
+
+        Catches the 'reads work but every order is rejected' trap (a Read-Only
+        key) at startup, instead of only discovering it when a signal finally
+        fires days later. Logs the exact permissions either way.
+        """
+        try:
+            info = await _with_backoff(lambda: self._ex.private_get_v5_user_query_api())
+        except Exception as e:  # endpoint hiccup — non-fatal, don't block startup
+            LOG.warning("permission_check_skipped", extra={"error": str(e)})
+            return
+        result = info.get("result", {}) if isinstance(info, dict) else {}
+        read_only = result.get("readOnly")
+        perms = result.get("permissions", {})
+        LOG.info("api_permissions", extra={"read_only": read_only, "permissions": perms})
+        if str(read_only) == "1":
+            raise ccxt.PermissionDenied(
+                "API key is READ-ONLY — it can read the account but every order will "
+                "be rejected. In Bybit, recreate/edit the key as Read-Write with "
+                "'Unified Trading - Trade' enabled."
+            )
 
     async def verify_auth(self) -> None:
         """Authenticated probe so bad API keys fail LOUDLY at startup.

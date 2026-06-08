@@ -463,3 +463,32 @@ async def test_reconcile_flat_when_no_position():
 
         assert strat.state.position == "flat"
         assert runner._open_trade_id is None
+
+
+# ---------------------------------------------------------------------------
+# Fix 10: detect a Read-Only key at startup (reads work but orders are rejected)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_readonly_key_is_rejected_at_startup():
+    import ccxt.async_support as ccxt
+    from bot.exchange import BybitConnector
+
+    conn = BybitConnector(api_key="k", api_secret="s", symbol="AVAX/USDT")
+    conn._ex.private_get_v5_user_query_api = AsyncMock(
+        return_value={"result": {"readOnly": 1, "permissions": {"ContractTrade": []}}}
+    )
+    with pytest.raises(ccxt.PermissionDenied):
+        await conn._check_trade_permission()
+
+
+@pytest.mark.asyncio
+async def test_trading_key_passes_permission_check():
+    from bot.exchange import BybitConnector
+
+    conn = BybitConnector(api_key="k", api_secret="s", symbol="AVAX/USDT")
+    conn._ex.private_get_v5_user_query_api = AsyncMock(
+        return_value={"result": {"readOnly": 0, "permissions": {"ContractTrade": ["Order", "Position"]}}}
+    )
+    # Must not raise.
+    await conn._check_trade_permission()
