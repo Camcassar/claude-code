@@ -8,6 +8,8 @@ Whisper and typed into whatever app you're using (Slack, your editor, a
 browser, anywhere). Nothing leaves your Mac.
 
 - 🎤 Lives in the menu bar (🎤 idle, 🔴 recording, ⏳ transcribing)
+- 🫧 Floating "CC" bubble in the bottom-left of the screen that pulses with
+  your voice while you dictate (gray "breathing" while transcribing)
 - ⌥ Hold **Right Option** to dictate (configurable)
 - 🍎 Apple Silicon: [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) with `whisper-large-v3-turbo` — fast and accurate
 - 💻 Intel Macs: falls back to [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
@@ -80,6 +82,13 @@ osascript -e 'tell application "System Events" to make login item at end with pr
 ```
 
 (or add `run.sh` under System Settings → General → Login Items).
+
+## Launch page (GitHub Pages)
+
+`docs/index.html` is a ready-made landing page with the install command.
+To put it on the web for free: GitHub repo → **Settings → Pages** →
+Source: *Deploy from a branch* → Branch: `main`, folder `/docs` → Save.
+A minute later it's live at **https://camcassar.github.io/CamFlow/**.
 
 ## Installing for someone else
 
