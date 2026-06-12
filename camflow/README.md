@@ -16,7 +16,8 @@ browser, anywhere). Nothing leaves your Mac.
 ## Quick start
 
 ```bash
-cd camflow
+git clone https://github.com/Camcassar/CamFlow.git
+cd CamFlow
 ./run.sh
 ```
 
@@ -82,17 +83,10 @@ osascript -e 'tell application "System Events" to make login item at end with pr
 
 ## Installing for someone else
 
-Same steps on their Mac:
-
-```bash
-git clone https://github.com/Camcassar/claude-bot-6.git
-cd claude-bot-6/camflow
-./run.sh
-```
-
-They'll need to grant the three permissions above for their own terminal,
-and the model downloads once per machine. (For a double-clickable `.app`
-you'd package this with py2app or PyInstaller — not set up yet.)
+Same three commands from the Quick start on their Mac. They'll need to
+grant the three permissions above for their own terminal, and the model
+downloads once per machine. (For a double-clickable `.app` you'd package
+this with py2app or PyInstaller — not set up yet.)
 
 ## How it works
 
