@@ -1,0 +1,8 @@
+.env
+venv/
+__pycache__/
+*.log
+bot_state.json
+velocity_state.json
+sol_5m_history.csv
+scouting/eth_1h.csv
