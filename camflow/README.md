@@ -13,7 +13,12 @@ browser, anywhere). Nothing leaves your Mac.
 - ⌥ Hold **Right Option** to dictate (configurable)
 - 🍎 Apple Silicon: [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) with `whisper-large-v3-turbo` — fast and accurate
 - 💻 Intel Macs: falls back to [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-- 📋 Pastes the result and restores your previous clipboard
+- 📋 Pastes the result at your cursor and restores your previous clipboard
+- 📊 Local dashboard (menu bar → Open Dashboard): words dictated, time saved,
+  recent transcripts, and editors for your dictionary & replacements
+- 📖 Personal dictionary: names/slang are fed to Whisper so it spells them right
+- 🧹 Filler-word removal ("um", "uh") built in; optional AI cleanup via Claude
+  rewrites transcripts to what you meant (set `ai_cleanup: true` + `ANTHROPIC_API_KEY`)
 
 ## Quick start
 
@@ -44,7 +49,15 @@ app that launches CamFlow (e.g. **Terminal** or **iTerm**) under
 | **Accessibility** | Synthesize the ⌘V keystroke that inserts text |
 
 If the hotkey does nothing or text never appears, it's almost always a
-missing permission — toggle it off/on for your terminal and restart the app.
+missing permission. Diagnose with:
+
+```bash
+./run.sh --doctor
+```
+
+It checks all three permissions, triggers the macOS prompts for any that are
+missing, and tells you exactly what to enable. After granting, restart your
+terminal and run CamFlow again.
 
 ## Configuration
 
@@ -70,7 +83,12 @@ Optional. Create `~/.camflow.json`:
 | `backend` | `auto` | `mlx`, `faster-whisper`, or `auto` (MLX on Apple Silicon) |
 | `min_duration` | `0.3` | Discard accidental taps shorter than this (seconds) |
 | `restore_clipboard` | `true` | Put your old clipboard back after pasting |
-| `replacements` | `{}` | Spoken phrase → replacement text |
+| `remove_fillers` | `true` | Strip "um"/"uh" from transcripts |
+| `ai_cleanup` | `false` | Rewrite transcripts with Claude (grammar/intent). Needs `ANTHROPIC_API_KEY` |
+| `ai_model` | `claude-haiku-4-5` | Model used for AI cleanup |
+| `dashboard_port` | `4242` | Local dashboard at `http://localhost:<port>` |
+| `replacements` | `{}` | Spoken phrase → replacement text (editable in the dashboard) |
+| `dictionary` | `[]` | Names/slang to bias Whisper towards (editable in the dashboard) |
 
 Every key can also be set via environment variable, e.g.
 `CAMFLOW_HOTKEY=cmd_r ./run.sh`.

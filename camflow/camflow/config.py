@@ -19,6 +19,9 @@ CONFIG_PATH = Path.home() / ".camflow.json"
 DEFAULT_MLX_MODEL = "mlx-community/whisper-large-v3-turbo"
 DEFAULT_FASTER_WHISPER_MODEL = "base"
 
+# Fields that hold collections — edited via the dashboard, not env vars.
+_COLLECTION_FIELDS = ("replacements", "dictionary")
+
 
 @dataclass
 class Config:
@@ -35,8 +38,18 @@ class Config:
     min_duration: float = 0.3
     # Restore the previous clipboard contents after pasting.
     restore_clipboard: bool = True
+    # Strip filler words ("um", "uh") from transcripts.
+    remove_fillers: bool = True
+    # Rewrite transcripts with Claude (grammar/intent cleanup). Requires
+    # ANTHROPIC_API_KEY in the environment.
+    ai_cleanup: bool = False
+    ai_model: str = "claude-haiku-4-5"
+    # Port for the local dashboard (http://localhost:<port>).
+    dashboard_port: int = 4242
     # Words/phrases to replace in the transcript, e.g. {"new line": "\n"}.
     replacements: dict = field(default_factory=dict)
+    # Names, slang, and jargon to bias Whisper towards (and AI cleanup).
+    dictionary: list = field(default_factory=list)
 
     @classmethod
     def load(cls) -> "Config":
@@ -55,8 +68,22 @@ class Config:
             if env is not None:
                 if f.type == "float":
                     setattr(cfg, f.name, float(env))
+                elif f.type == "int":
+                    setattr(cfg, f.name, int(env))
                 elif f.type == "bool":
                     setattr(cfg, f.name, env.lower() in ("1", "true", "yes"))
-                elif f.name != "replacements":
+                elif f.name not in _COLLECTION_FIELDS:
                     setattr(cfg, f.name, env)
         return cfg
+
+    def save_collections(self) -> None:
+        """Persist dictionary/replacements edits back to ~/.camflow.json."""
+        data = {}
+        if CONFIG_PATH.exists():
+            try:
+                data = json.loads(CONFIG_PATH.read_text())
+            except (OSError, json.JSONDecodeError):
+                pass
+        data["dictionary"] = self.dictionary
+        data["replacements"] = self.replacements
+        CONFIG_PATH.write_text(json.dumps(data, indent=2))

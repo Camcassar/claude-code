@@ -16,4 +16,4 @@ if [ ! -f .venv/.deps-installed ] || [ requirements.txt -nt .venv/.deps-installe
     touch .venv/.deps-installed
 fi
 
-exec .venv/bin/python -m camflow
+exec .venv/bin/python -m camflow "$@"
