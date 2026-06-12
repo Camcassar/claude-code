@@ -12,8 +12,10 @@ import time
 
 from pynput import keyboard
 
+from .cleanup import clean_transcript
 from .config import Config
 from .recorder import SAMPLE_RATE, Recorder
+from .stats import Stats
 from .transcriber import Transcriber
 from .typer import paste_text
 
@@ -51,6 +53,7 @@ class Dictation:
         self.config = config
         self.state = "loading"
         self.last_transcript = ""
+        self.stats = Stats()
         self._hotkey = _resolve_hotkey(config.hotkey)
         self._recorder = Recorder()
         self._transcriber = Transcriber(config)
@@ -95,17 +98,21 @@ class Dictation:
         try:
             start = time.time()
             text = self._transcriber.transcribe(audio)
+            text = clean_transcript(text, self.config)
             print(f"({time.time() - start:.1f}s) {text!r}")
             if text:
                 self.last_transcript = text
                 paste_text(text, restore_clipboard=self.config.restore_clipboard)
+                self.stats.record(text, len(audio) / SAMPLE_RATE)
         except Exception as exc:
             print(f"transcription failed: {exc}")
         finally:
             self.state = "idle"
 
 
-def run_menu_bar(dictation: Dictation) -> None:
+def run_menu_bar(dictation: Dictation, dashboard_url: str | None) -> None:
+    import webbrowser
+
     import rumps
 
     try:
@@ -121,10 +128,18 @@ def run_menu_bar(dictation: Dictation) -> None:
             hotkey_label = HOTKEY_LABELS.get(
                 dictation.config.hotkey, dictation.config.hotkey
             )
+            menu = [rumps.MenuItem(f"Hold {hotkey_label} to dictate")]
+            if dashboard_url:
+                menu.append(
+                    rumps.MenuItem(
+                        "Open Dashboard",
+                        callback=lambda _: webbrowser.open(dashboard_url),
+                    )
+                )
             super().__init__(
                 "CamFlow",
                 title=ICONS["loading"],
-                menu=[rumps.MenuItem(f"Hold {hotkey_label} to dictate")],
+                menu=menu,
                 quit_button="Quit CamFlow",
             )
             # Poll dictation state from the main thread; AppKit UI updates
@@ -155,11 +170,27 @@ def run_headless(dictation: Dictation) -> None:
 def main() -> None:
     config = Config.load()
     dictation = Dictation(config)
+
+    try:
+        from .doctor import warn_missing_permissions
+
+        warn_missing_permissions()
+    except Exception:
+        pass
+
+    try:
+        from .dashboard import start_dashboard
+
+        dashboard_url = start_dashboard(config, dictation.stats)
+    except OSError as exc:
+        print(f"dashboard disabled (port {config.dashboard_port} busy?): {exc}")
+        dashboard_url = None
+
     dictation.start()
     try:
         import rumps  # noqa: F401
 
-        run_menu_bar(dictation)
+        run_menu_bar(dictation, dashboard_url)
     except ImportError:
         run_headless(dictation)
 

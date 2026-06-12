@@ -48,11 +48,19 @@ class Transcriber:
 
     def transcribe(self, audio: np.ndarray) -> str:
         language = self._config.language or None
+        # Biasing Whisper with the user's dictionary (names, slang, jargon)
+        # makes it far more likely to spell those words correctly.
+        prompt = None
+        if self._config.dictionary:
+            prompt = "Glossary: " + ", ".join(self._config.dictionary) + "."
         if self._backend == "mlx":
             import mlx_whisper
 
             result = mlx_whisper.transcribe(
-                audio, path_or_hf_repo=self._model_name, language=language
+                audio,
+                path_or_hf_repo=self._model_name,
+                language=language,
+                initial_prompt=prompt,
             )
             text = result["text"]
         else:
@@ -60,12 +68,8 @@ class Transcriber:
                 from faster_whisper import WhisperModel
 
                 self._model = WhisperModel(self._model_name, compute_type="int8")
-            segments, _info = self._model.transcribe(audio, language=language)
+            segments, _info = self._model.transcribe(
+                audio, language=language, initial_prompt=prompt
+            )
             text = "".join(segment.text for segment in segments)
-        return self._clean(text)
-
-    def _clean(self, text: str) -> str:
-        text = text.strip()
-        for old, new in self._config.replacements.items():
-            text = text.replace(old, new)
-        return text
+        return text.strip()
