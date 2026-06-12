@@ -1,4 +1,4 @@
-"""WhisperFlow — hold-to-dictate menu bar app.
+"""CamFlow — hold-to-dictate menu bar app.
 
 Hold the hotkey (right Option by default), speak, release. The audio is
 transcribed locally with Whisper and the text is pasted into whichever app
@@ -103,16 +103,16 @@ class Dictation:
 def run_menu_bar(dictation: Dictation) -> None:
     import rumps
 
-    class WhisperFlowApp(rumps.App):
+    class CamFlowApp(rumps.App):
         def __init__(self) -> None:
             hotkey_label = HOTKEY_LABELS.get(
                 dictation.config.hotkey, dictation.config.hotkey
             )
             super().__init__(
-                "WhisperFlow",
+                "CamFlow",
                 title=ICONS["loading"],
                 menu=[rumps.MenuItem(f"Hold {hotkey_label} to dictate")],
-                quit_button="Quit WhisperFlow",
+                quit_button="Quit CamFlow",
             )
             # Poll dictation state from the main thread; AppKit UI updates
             # are not safe from the listener/worker threads.
@@ -122,7 +122,7 @@ def run_menu_bar(dictation: Dictation) -> None:
         def _refresh(self, _timer) -> None:
             self.title = ICONS[dictation.state]
 
-    WhisperFlowApp().run()
+    CamFlowApp().run()
 
 
 def run_headless(dictation: Dictation) -> None:

@@ -1,6 +1,7 @@
-# WhisperFlow
+# CamFlow
 
-A local, open-source Wispr Flow–style dictation app for macOS.
+Local, hold-to-dictate voice typing for macOS — a Wispr Flow–style app
+that runs entirely on your Mac.
 
 **Hold a key, talk, release** — your speech is transcribed on-device with
 Whisper and typed into whatever app you're using (Slack, your editor, a
@@ -15,7 +16,7 @@ browser, anywhere). Nothing leaves your Mac.
 ## Quick start
 
 ```bash
-cd whisperflow
+cd camflow
 ./run.sh
 ```
 
@@ -30,7 +31,7 @@ When the menu bar icon switches from `🎤…` to `🎤`, you're ready:
 ## macOS permissions (required)
 
 macOS will prompt for, or you must grant manually, these permissions for the
-app that launches WhisperFlow (e.g. **Terminal** or **iTerm**) under
+app that launches CamFlow (e.g. **Terminal** or **iTerm**) under
 **System Settings → Privacy & Security**:
 
 | Permission | Why |
@@ -44,7 +45,7 @@ missing permission — toggle it off/on for your terminal and restart the app.
 
 ## Configuration
 
-Optional. Create `~/.whisperflow.json`:
+Optional. Create `~/.camflow.json`:
 
 ```json
 {
@@ -69,15 +70,29 @@ Optional. Create `~/.whisperflow.json`:
 | `replacements` | `{}` | Spoken phrase → replacement text |
 
 Every key can also be set via environment variable, e.g.
-`WHISPERFLOW_HOTKEY=cmd_r ./run.sh`.
+`CAMFLOW_HOTKEY=cmd_r ./run.sh`.
 
 ## Launch at login
 
 ```bash
-osascript -e 'tell application "System Events" to make login item at end with properties {path:"/path/to/whisperflow/run.sh", hidden:true}'
+osascript -e 'tell application "System Events" to make login item at end with properties {path:"/path/to/camflow/run.sh", hidden:true}'
 ```
 
 (or add `run.sh` under System Settings → General → Login Items).
+
+## Installing for someone else
+
+Same steps on their Mac:
+
+```bash
+git clone https://github.com/Camcassar/claude-bot-6.git
+cd claude-bot-6/camflow
+./run.sh
+```
+
+They'll need to grant the three permissions above for their own terminal,
+and the model downloads once per machine. (For a double-clickable `.app`
+you'd package this with py2app or PyInstaller — not set up yet.)
 
 ## How it works
 
@@ -89,8 +104,8 @@ release     ──▶ transcribe locally (mlx-whisper / faster-whisper)
 
 | File | Role |
 |---|---|
-| `whisperflow/app.py` | Menu bar UI + hotkey state machine |
-| `whisperflow/recorder.py` | Microphone capture |
-| `whisperflow/transcriber.py` | Whisper backends |
-| `whisperflow/typer.py` | Clipboard paste injection |
-| `whisperflow/config.py` | `~/.whisperflow.json` + env vars |
+| `camflow/app.py` | Menu bar UI + hotkey state machine |
+| `camflow/recorder.py` | Microphone capture |
+| `camflow/transcriber.py` | Whisper backends |
+| `camflow/typer.py` | Clipboard paste injection |
+| `camflow/config.py` | `~/.camflow.json` + env vars |
