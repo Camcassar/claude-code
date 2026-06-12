@@ -1,7 +1,7 @@
-"""Configuration for WhisperFlow.
+"""Configuration for CamFlow.
 
-Settings are read from a JSON file at ~/.whisperflow.json, with environment
-variables (WHISPERFLOW_*) taking precedence. Everything has a sensible
+Settings are read from a JSON file at ~/.camflow.json, with environment
+variables (CAMFLOW_*) taking precedence. Everything has a sensible
 default, so no config is required to get started.
 """
 
@@ -12,7 +12,7 @@ import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
-CONFIG_PATH = Path.home() / ".whisperflow.json"
+CONFIG_PATH = Path.home() / ".camflow.json"
 
 # Default Whisper models per backend. The MLX turbo model is fast and accurate
 # on Apple Silicon; "base" keeps Intel Macs responsive with faster-whisper.
@@ -51,7 +51,7 @@ class Config:
                 if f.name in data:
                     setattr(cfg, f.name, data[f.name])
         for f in fields(cls):
-            env = os.environ.get(f"WHISPERFLOW_{f.name.upper()}")
+            env = os.environ.get(f"CAMFLOW_{f.name.upper()}")
             if env is not None:
                 if f.type == "float":
                     setattr(cfg, f.name, float(env))
