@@ -86,6 +86,11 @@ class Dictation:
                 target=self._transcribe_and_paste, args=(audio,), daemon=True
             ).start()
 
+    @property
+    def level(self) -> float:
+        """Current 0..1 voice level (only meaningful while recording)."""
+        return self._recorder.level
+
     def _transcribe_and_paste(self, audio) -> None:
         try:
             start = time.time()
@@ -103,6 +108,14 @@ class Dictation:
 def run_menu_bar(dictation: Dictation) -> None:
     import rumps
 
+    try:
+        from .overlay import Overlay
+
+        overlay = Overlay()
+    except Exception as exc:
+        print(f"on-screen indicator disabled: {exc}")
+        overlay = None
+
     class CamFlowApp(rumps.App):
         def __init__(self) -> None:
             hotkey_label = HOTKEY_LABELS.get(
@@ -115,12 +128,17 @@ def run_menu_bar(dictation: Dictation) -> None:
                 quit_button="Quit CamFlow",
             )
             # Poll dictation state from the main thread; AppKit UI updates
-            # are not safe from the listener/worker threads.
-            self._timer = rumps.Timer(self._refresh, 0.2)
+            # are not safe from the listener/worker threads. 25 fps keeps the
+            # voice indicator animation smooth.
+            self._timer = rumps.Timer(self._refresh, 0.04)
             self._timer.start()
 
         def _refresh(self, _timer) -> None:
-            self.title = ICONS[dictation.state]
+            icon = ICONS[dictation.state]
+            if self.title != icon:
+                self.title = icon
+            if overlay is not None:
+                overlay.refresh(dictation.state, dictation.level)
 
     CamFlowApp().run()
 

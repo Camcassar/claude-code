@@ -19,6 +19,8 @@ class Recorder:
         self._frames: list[np.ndarray] = []
         self._stream: sd.InputStream | None = None
         self._lock = threading.Lock()
+        # Smoothed 0..1 voice level, read by the on-screen indicator.
+        self.level = 0.0
 
     @property
     def recording(self) -> bool:
@@ -28,6 +30,7 @@ class Recorder:
         if self._stream is not None:
             return
         self._frames = []
+        self.level = 0.0
         self._stream = sd.InputStream(
             samplerate=SAMPLE_RATE,
             channels=1,
@@ -39,6 +42,9 @@ class Recorder:
     def _on_audio(self, indata, frames, time, status) -> None:
         if status:
             print(f"audio status: {status}")
+        rms = float(np.sqrt(np.mean(np.square(indata))))
+        # Fast attack, slow decay so the indicator follows speech naturally.
+        self.level = max(min(1.0, rms * 14.0), self.level * 0.82)
         with self._lock:
             self._frames.append(indata.copy())
 
