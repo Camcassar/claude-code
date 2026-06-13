@@ -50,11 +50,20 @@ def _resolve_hotkey(name: str):
 class Dictation:
     """Hotkey listener + record/transcribe/paste pipeline (UI-agnostic)."""
 
+    # A press shorter than this is a "tap"; longer is push-to-talk.
+    TAP_MAX = 0.35
+    # Two taps within this window count as a double-tap (toggles lock mode).
+    DOUBLE_TAP_GAP = 0.4
+
     def __init__(self, config: Config) -> None:
         self.config = config
         self.state = "loading"
         self.last_transcript = ""
         self.stats = Stats()
+        self.locked = False  # hands-free mode (double-tap to toggle)
+        self._press_time = 0.0
+        self._last_tap = 0.0
+        self._ignore_next_release = False
         self._hotkey = _resolve_hotkey(config.hotkey)
         self._recorder = Recorder()
         self._transcriber = Transcriber(config)
@@ -75,20 +84,53 @@ class Dictation:
         print(f"ready — hold {self.config.hotkey} to dictate")
 
     def _on_press(self, key) -> None:
-        if key == self._hotkey and self.state == "idle":
+        if key != self._hotkey or self.state in ("loading", "transcribing", "paused"):
+            return
+        # In hands-free (locked) mode, a press ends recording and transcribes.
+        if self.locked:
+            self.locked = False
+            self._ignore_next_release = True
+            self._finish(self._recorder.stop())
+            return
+        if self.state == "idle":
             self.state = "recording"
+            self._press_time = time.time()
             self._recorder.start()
 
     def _on_release(self, key) -> None:
-        if key == self._hotkey and self.state == "recording":
-            audio = self._recorder.stop()
-            if len(audio) < self.config.min_duration * SAMPLE_RATE:
-                self.state = "idle"
-                return
-            self.state = "transcribing"
-            threading.Thread(
-                target=self._transcribe_and_paste, args=(audio,), daemon=True
-            ).start()
+        if key != self._hotkey:
+            return
+        if self._ignore_next_release:
+            self._ignore_next_release = False
+            return
+        if self.state != "recording" or self.locked:
+            return
+        now = time.time()
+        hold = now - self._press_time
+        audio = self._recorder.stop()
+        if hold >= self.TAP_MAX:
+            # Push-to-talk: held down, so transcribe what was said.
+            self._last_tap = 0.0
+            self._finish(audio)
+        elif now - self._last_tap <= self.DOUBLE_TAP_GAP:
+            # Double-tap → enter hands-free mode: record until tapped again.
+            self._last_tap = 0.0
+            self.locked = True
+            self.state = "recording"
+            self._recorder.start()
+        else:
+            # Single quick tap: discard the blip, remember it for double-tap.
+            self._last_tap = now
+            self.state = "idle"
+
+    def _finish(self, audio) -> None:
+        if len(audio) < self.config.min_duration * SAMPLE_RATE:
+            self.state = "idle"
+            return
+        self.state = "transcribing"
+        threading.Thread(
+            target=self._transcribe_and_paste, args=(audio,), daemon=True
+        ).start()
 
     @property
     def level(self) -> float:
@@ -102,6 +144,7 @@ class Dictation:
             return False
         if self.state == "recording":
             self._recorder.stop()
+        self.locked = False
         if self.state in ("idle", "recording"):
             self.state = "paused"
         return self.state == "paused"
@@ -146,6 +189,7 @@ def run_menu_bar(dictation: Dictation, dashboard_url: str | None) -> None:
             )
             menu = [
                 rumps.MenuItem(f"Hold {hotkey_label} to dictate"),
+                rumps.MenuItem(f"Double-tap {hotkey_label} for hands-free"),
                 self._words_item,
                 None,  # separator
                 self._pause_item,
