@@ -11,6 +11,18 @@ APP="CamFlow.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
+# Generate the CC bubble icon (macOS only; falls back to the default icon).
+if [ "$(uname)" = "Darwin" ] && [ ! -f CamFlow.icns ]; then
+    if [ ! -d .venv ]; then
+        python3 -m venv .venv
+        .venv/bin/pip install --quiet --upgrade pip
+        .venv/bin/pip install --quiet -r requirements.txt
+        touch .venv/.deps-installed
+    fi
+    .venv/bin/python make_icon.py || echo "icon generation failed — using default icon"
+fi
+[ -f CamFlow.icns ] && cp CamFlow.icns "$APP/Contents/Resources/CamFlow.icns"
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -20,6 +32,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key>        <string>CamFlow</string>
     <key>CFBundleIdentifier</key>         <string>com.camcassar.camflow</string>
     <key>CFBundleExecutable</key>         <string>CamFlow</string>
+    <key>CFBundleIconFile</key>           <string>CamFlow</string>
     <key>CFBundlePackageType</key>        <string>APPL</string>
     <key>CFBundleShortVersionString</key> <string>0.2.0</string>
     <key>LSUIElement</key>                <true/>

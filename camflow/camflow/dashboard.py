@@ -16,6 +16,7 @@ PAGE = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CamFlow Dashboard</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="%23ee4236"/><text x="32" y="41" font-family="Arial,sans-serif" font-size="24" font-weight="800" fill="white" text-anchor="middle">CC</text></svg>'>
 <style>
   :root { --bg:#0d1017; --card:#161b26; --text:#e8ecf4; --muted:#9aa4b8;
           --accent:#ee4236; --accent-soft:rgba(238,66,54,0.2); --green:#34c77b; }
