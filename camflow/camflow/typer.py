@@ -12,6 +12,7 @@ permission in System Settings → Privacy & Security.
 from __future__ import annotations
 
 import subprocess
+import threading
 import time
 
 from pynput.keyboard import Controller, Key
@@ -33,12 +34,17 @@ def paste_text(text: str, restore_clipboard: bool = True) -> None:
         return
     previous = _get_clipboard() if restore_clipboard else None
     _set_clipboard(text)
-    # Give the pasteboard a moment to settle before synthesizing the keystroke.
-    time.sleep(0.05)
+    # Brief settle so the pasteboard write lands before the keystroke.
+    time.sleep(0.02)
     with _keyboard.pressed(Key.cmd):
         _keyboard.press("v")
         _keyboard.release("v")
     if previous is not None:
-        # Wait for the frontmost app to consume the paste before restoring.
-        time.sleep(0.3)
-        _set_clipboard(previous)
+        # Let the frontmost app consume the paste before restoring the
+        # previous clipboard, on a background thread so dictation returns
+        # to idle immediately instead of blocking on this delay.
+        def _restore() -> None:
+            time.sleep(0.15)
+            _set_clipboard(previous)
+
+        threading.Thread(target=_restore, daemon=True).start()
