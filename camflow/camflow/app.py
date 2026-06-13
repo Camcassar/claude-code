@@ -201,6 +201,15 @@ def run_headless(dictation: Dictation) -> None:
 
 
 def main() -> None:
+    from . import singleton
+
+    if not singleton.acquire():
+        print(
+            "CamFlow is already running — this copy is exiting to avoid "
+            "double dictation. Use the menu bar icon to control it."
+        )
+        return
+
     config = Config.load()
     dictation = Dictation(config)
 
