@@ -93,6 +93,25 @@ Optional. Create `~/.camflow.json`:
 Every key can also be set via environment variable, e.g.
 `CAMFLOW_HOTKEY=cmd_r ./run.sh`.
 
+## Make it a real Mac app
+
+```bash
+./make_app.sh --install
+```
+
+This builds **CamFlow.app** and copies it to /Applications — launch it from
+Spotlight like any app, no terminal needed. First launch: right-click →
+**Open** (it's unsigned; that's fine for personal use). macOS will then ask
+for Microphone / Input Monitoring / Accessibility for **CamFlow** itself —
+grant all three once and you're done. Add it to System Settings → General →
+**Login Items** to have dictation ready every time you boot.
+
+When launched as an app, logs go to `~/.camflow/camflow.log`.
+
+No Apple Developer account is needed for your own Mac. Signing/notarization
+(the $99/yr Apple Developer Program) only matters if you distribute the app
+to other people and want to avoid the right-click-to-open step.
+
 ## Launch at login
 
 ```bash
