@@ -7,6 +7,7 @@ http://localhost:4242 in any browser.
 
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -127,7 +128,26 @@ def start_dashboard(config, stats) -> str:
             self.end_headers()
             self.wfile.write(body)
 
+        def _authorized(self) -> bool:
+            password = config.dashboard_password
+            if not password:
+                return True
+            auth = self.headers.get("Authorization", "")
+            if auth.startswith("Basic "):
+                try:
+                    decoded = base64.b64decode(auth[6:]).decode()
+                    return decoded.split(":", 1)[-1] == password
+                except Exception:
+                    pass
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="CamFlow"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+
         def do_GET(self) -> None:
+            if not self._authorized():
+                return
             if self.path == "/api/state":
                 state = {
                     "stats": stats.summary(),
@@ -142,6 +162,8 @@ def start_dashboard(config, stats) -> str:
                 self._send(PAGE.encode(), "text/html; charset=utf-8")
 
         def do_POST(self) -> None:
+            if not self._authorized():
+                return
             length = int(self.headers.get("Content-Length", 0))
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")

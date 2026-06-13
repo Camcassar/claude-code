@@ -87,6 +87,10 @@ Optional. Create `~/.camflow.json`:
 | `ai_cleanup` | `false` | Rewrite transcripts with Claude (grammar/intent). Needs `ANTHROPIC_API_KEY` |
 | `ai_model` | `claude-haiku-4-5` | Model used for AI cleanup |
 | `dashboard_port` | `4242` | Local dashboard at `http://localhost:<port>` |
+| `dashboard_password` | `""` | Optional dashboard password (browser prompts; leave username blank) |
+| `overlay_size` | `1.0` | CC bubble size multiplier (0.4–3.0) |
+| `overlay_opacity` | `1.0` | CC bubble opacity (0.1–1.0) |
+| `overlay_position` | `bottom-left` | Bubble corner: `bottom-left`, `bottom-right`, `top-left`, `top-right` |
 | `replacements` | `{}` | Spoken phrase → replacement text (editable in the dashboard) |
 | `dictionary` | `[]` | Names/slang to bias Whisper towards (editable in the dashboard) |
 

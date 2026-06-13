@@ -46,6 +46,13 @@ class Config:
     ai_model: str = "claude-haiku-4-5"
     # Port for the local dashboard (http://localhost:<port>).
     dashboard_port: int = 4242
+    # Optional dashboard password (HTTP Basic auth). Empty = no password.
+    dashboard_password: str = ""
+    # On-screen CC bubble: size multiplier (0.4–3.0), opacity (0.1–1.0),
+    # and corner: bottom-left, bottom-right, top-left, top-right.
+    overlay_size: float = 1.0
+    overlay_opacity: float = 1.0
+    overlay_position: str = "bottom-left"
     # Words/phrases to replace in the transcript, e.g. {"new line": "\n"}.
     replacements: dict = field(default_factory=dict)
     # Names, slang, and jargon to bias Whisper towards (and AI cleanup).

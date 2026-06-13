@@ -34,23 +34,25 @@ class _CircleView(AppKit.NSView):
             return None
         self.level = 0.0
         self.mode = "recording"
+        self.scale = 1.0
         return self
 
     def drawRect_(self, rect):
         bounds = self.bounds()
         cx = bounds.size.width / 2.0
         cy = bounds.size.height / 2.0
+        s = self.scale
 
         if self.mode == "transcribing":
             pulse = (math.sin(time.time() * 5.0) + 1.0) / 2.0
-            radius = BASE_RADIUS + 5.0 * pulse
+            radius = (BASE_RADIUS + 5.0 * pulse) * s
             r, g, b = TRANSCRIBING_COLOR
         else:
-            radius = BASE_RADIUS + MAX_GROWTH * max(0.0, min(1.0, self.level))
+            radius = (BASE_RADIUS + MAX_GROWTH * max(0.0, min(1.0, self.level))) * s
             r, g, b = RECORDING_COLOR
         color = AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, 0.95)
 
-        halo_radius = radius + HALO
+        halo_radius = radius + HALO * s
         halo = AppKit.NSBezierPath.bezierPathWithOvalInRect_(
             Foundation.NSMakeRect(
                 cx - halo_radius, cy - halo_radius, 2 * halo_radius, 2 * halo_radius
@@ -66,7 +68,7 @@ class _CircleView(AppKit.NSView):
         circle.fill()
 
         attrs = {
-            AppKit.NSFontAttributeName: AppKit.NSFont.boldSystemFontOfSize_(19),
+            AppKit.NSFontAttributeName: AppKit.NSFont.boldSystemFontOfSize_(19 * s),
             AppKit.NSForegroundColorAttributeName: AppKit.NSColor.whiteColor(),
         }
         label = Foundation.NSString.stringWithString_("CC")
@@ -80,8 +82,22 @@ class _CircleView(AppKit.NSView):
 class Overlay:
     """Owns the floating window. All methods must be called on the main thread."""
 
-    def __init__(self) -> None:
-        rect = Foundation.NSMakeRect(MARGIN, MARGIN, WINDOW_SIZE, WINDOW_SIZE)
+    def __init__(self, config=None) -> None:
+        scale = 1.0
+        opacity = 1.0
+        position = "bottom-left"
+        if config is not None:
+            scale = max(0.4, min(3.0, float(config.overlay_size)))
+            opacity = max(0.1, min(1.0, float(config.overlay_opacity)))
+            position = config.overlay_position
+        size = WINDOW_SIZE * scale
+
+        screen = AppKit.NSScreen.mainScreen()
+        sf = screen.frame() if screen else Foundation.NSMakeRect(0, 0, 1440, 900)
+        x = MARGIN if "left" in position else sf.size.width - size - MARGIN
+        y = MARGIN if "bottom" in position else sf.size.height - size - MARGIN
+
+        rect = Foundation.NSMakeRect(x, y, size, size)
         window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect,
             AppKit.NSWindowStyleMaskBorderless,
@@ -91,6 +107,7 @@ class Overlay:
         window.setOpaque_(False)
         window.setBackgroundColor_(AppKit.NSColor.clearColor())
         window.setHasShadow_(False)
+        window.setAlphaValue_(opacity)
         window.setLevel_(AppKit.NSStatusWindowLevel)
         window.setIgnoresMouseEvents_(True)
         window.setCollectionBehavior_(
@@ -98,8 +115,9 @@ class Overlay:
             | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
         )
         self._view = _CircleView.alloc().initWithFrame_(
-            Foundation.NSMakeRect(0, 0, WINDOW_SIZE, WINDOW_SIZE)
+            Foundation.NSMakeRect(0, 0, size, size)
         )
+        self._view.scale = scale
         window.setContentView_(self._view)
         self._window = window
         self._visible = False
