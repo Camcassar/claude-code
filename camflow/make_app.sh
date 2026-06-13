@@ -49,13 +49,33 @@ cat > "$APP/Contents/MacOS/CamFlow" <<'LAUNCHER'
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LOG="$HOME/.camflow/camflow.log"
 mkdir -p "$HOME/.camflow"
+
+# Finder launches apps with a stripped-down PATH that omits Homebrew and
+# conda; add the common locations so python3 is found.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/Library/Frameworks/Python.framework/Versions/Current/bin:$HOME/anaconda3/bin:$HOME/miniconda3/bin:$PATH"
+
+alert() {
+    /usr/bin/osascript -e "display alert \"CamFlow couldn't start\" message \"$1\"" >/dev/null 2>&1
+}
+
+RUNDIR=""
 for DIR in "$(cd "$HERE/../../.." 2>/dev/null && pwd)" "$HOME/CamFlow"; do
-    if [ -x "$DIR/run.sh" ]; then
-        echo "=== CamFlow launched $(date) from $DIR ===" >> "$LOG"
-        exec "$DIR/run.sh" >> "$LOG" 2>&1
-    fi
+    if [ -x "$DIR/run.sh" ]; then RUNDIR="$DIR"; break; fi
 done
-osascript -e 'display alert "CamFlow" message "Could not find the CamFlow folder. Keep the folder at ~/CamFlow (or keep CamFlow.app inside it)."'
+if [ -z "$RUNDIR" ]; then
+    alert "Could not find the CamFlow folder. Keep it at ~/CamFlow (or keep CamFlow.app inside it)."
+    exit 1
+fi
+
+echo "=== CamFlow launched $(date) from $RUNDIR ===" >> "$LOG"
+# Don't exec — so we can report failure with an alert.
+"$RUNDIR/run.sh" >> "$LOG" 2>&1
+CODE=$?
+if [ "$CODE" -ne 0 ]; then
+    TAIL="$(tail -n 8 "$LOG" 2>/dev/null | tr '"' "'" | tr '\n' ' ')"
+    alert "Exited with code $CODE. Recent log: $TAIL  —  Full log: ~/.camflow/camflow.log"
+    exit "$CODE"
+fi
 LAUNCHER
 chmod +x "$APP/Contents/MacOS/CamFlow"
 
