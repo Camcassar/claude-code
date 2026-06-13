@@ -24,6 +24,7 @@ ICONS = {
     "idle": "🎤",
     "recording": "🔴",
     "transcribing": "⏳",
+    "paused": "⏸",
 }
 
 HOTKEY_LABELS = {
@@ -94,6 +95,17 @@ class Dictation:
         """Current 0..1 voice level (only meaningful while recording)."""
         return self._recorder.level
 
+    def toggle_pause(self) -> bool:
+        """Pause/resume dictation; returns True if now paused."""
+        if self.state == "paused":
+            self.state = "idle"
+            return False
+        if self.state == "recording":
+            self._recorder.stop()
+        if self.state in ("idle", "recording"):
+            self.state = "paused"
+        return self.state == "paused"
+
     def _transcribe_and_paste(self, audio) -> None:
         try:
             start = time.time()
@@ -118,7 +130,7 @@ def run_menu_bar(dictation: Dictation, dashboard_url: str | None) -> None:
     try:
         from .overlay import Overlay
 
-        overlay = Overlay()
+        overlay = Overlay(dictation.config)
     except Exception as exc:
         print(f"on-screen indicator disabled: {exc}")
         overlay = None
@@ -128,7 +140,16 @@ def run_menu_bar(dictation: Dictation, dashboard_url: str | None) -> None:
             hotkey_label = HOTKEY_LABELS.get(
                 dictation.config.hotkey, dictation.config.hotkey
             )
-            menu = [rumps.MenuItem(f"Hold {hotkey_label} to dictate")]
+            self._words_item = rumps.MenuItem("0 words dictated")
+            self._pause_item = rumps.MenuItem(
+                "Pause dictation", callback=self._toggle_pause
+            )
+            menu = [
+                rumps.MenuItem(f"Hold {hotkey_label} to dictate"),
+                self._words_item,
+                None,  # separator
+                self._pause_item,
+            ]
             if dashboard_url:
                 menu.append(
                     rumps.MenuItem(
@@ -145,8 +166,13 @@ def run_menu_bar(dictation: Dictation, dashboard_url: str | None) -> None:
             # Poll dictation state from the main thread; AppKit UI updates
             # are not safe from the listener/worker threads. 25 fps keeps the
             # voice indicator animation smooth.
+            self._tick = 0
             self._timer = rumps.Timer(self._refresh, 0.04)
             self._timer.start()
+
+        def _toggle_pause(self, item) -> None:
+            paused = dictation.toggle_pause()
+            item.title = "Resume dictation" if paused else "Pause dictation"
 
         def _refresh(self, _timer) -> None:
             icon = ICONS[dictation.state]
@@ -154,6 +180,13 @@ def run_menu_bar(dictation: Dictation, dashboard_url: str | None) -> None:
                 self.title = icon
             if overlay is not None:
                 overlay.refresh(dictation.state, dictation.level)
+            self._tick += 1
+            if self._tick % 50 == 0:  # every ~2s
+                summary = dictation.stats.summary()
+                self._words_item.title = (
+                    f"{summary['total_words']:,} words dictated "
+                    f"({summary['words_today']:,} today)"
+                )
 
     CamFlowApp().run()
 
