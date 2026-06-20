@@ -99,6 +99,7 @@ async def _run(cfg: dict) -> None:
         am_mult_fallback=size_cfg["am_mult_fallback"],
         am_stk_min=size_cfg["am_streak_min"],
         max_consec_3x=size_cfg["max_consec_3x"],
+        time_exit_bars=strat_cfg.get("time_exit_bars", 24),
     )
 
     # DB path: BOT8_DB_PATH (absolute) lets you point at a Railway volume so the

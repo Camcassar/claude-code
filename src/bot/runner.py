@@ -214,7 +214,9 @@ class Bot8Runner:
 
         # Check if existing position hit SL/TP (position closed by exchange)
         if self._open_trade_id and position.side == "none" and self._strat.state.position != "flat":
-            exit_price = float(df["close"].iloc[-1])
+            # Use real fill price from Bybit trade history, fall back to bar close
+            real_fill = await self._ex.fetch_last_fill_price()
+            exit_price = real_fill if real_fill is not None else float(df["close"].iloc[-1])
             entry = self._strat.state.entry_price
             side = self._strat.state.position
             qty = self._strat.state.entry_qty
@@ -222,7 +224,7 @@ class Bot8Runner:
             close_trade(self._db, self._open_trade_id, exit_price, pnl)
             self._strat.state.on_close(pnl)
             self._open_trade_id = None
-            LOG.info("trade_closed_by_exchange", extra={"pnl": round(pnl, 2)})
+            LOG.info("trade_closed_by_exchange", extra={"pnl": round(pnl, 2), "fill": exit_price})
             await telegram.notify_close(side, pnl)
 
         # Daily summary — fires once per day at first bar on or after 09:00 UTC
@@ -245,11 +247,34 @@ class Bot8Runner:
         if signal.action == "hold":
             return
 
-        # Close existing position first if flipping
+        # Time exit: close current position, don't open a new one
+        if signal.action == "time_exit":
+            if position.side != "none" and self._open_trade_id:
+                await self._ex.close_position(position.side, position.qty)
+                real_fill = await self._ex.fetch_last_fill_price()
+                exit_price = real_fill if real_fill is not None else signal.price
+                entry = self._strat.state.entry_price
+                side = self._strat.state.position
+                qty = position.qty
+                pnl = (exit_price - entry) * qty if side == "long" else (entry - exit_price) * qty
+                close_trade(self._db, self._open_trade_id, exit_price, pnl)
+                self._strat.state.on_close(pnl)
+                self._open_trade_id = None
+                LOG.info("time_exit_fired", extra={"bars_held": self._strat.time_exit_bars, "pnl": round(pnl, 2)})
+                await telegram.notify_close(side, pnl)
+                await telegram.send(
+                    f"⏱ <b>Time Exit — Bot 8</b>\n"
+                    f"Closed {side.upper()} after {self._strat.time_exit_bars} bars (12h).\n"
+                    f"P&L: {'+'if pnl>=0 else ''}{pnl:.2f} USDT"
+                )
+            return
+
+        # Close existing position first if flipping direction
         if position.side != "none":
             await self._ex.close_position(position.side, position.qty)
             if self._open_trade_id:
-                exit_price = signal.price
+                real_fill = await self._ex.fetch_last_fill_price()
+                exit_price = real_fill if real_fill is not None else signal.price
                 entry = self._strat.state.entry_price
                 side = self._strat.state.position
                 qty = position.qty
@@ -267,6 +292,7 @@ class Bot8Runner:
             self._strat.state.position = "long"
             self._strat.state.entry_price = signal.price
             self._strat.state.entry_qty = signal.qty
+            self._strat.state.on_open()
             if self._strat.state.win_streak >= self._strat.am_stk_min:
                 self._strat.state.consec_3x += 1
             await telegram.notify_trade("long", signal.qty, signal.price, signal.sl_price, signal.tp_price)
@@ -279,6 +305,7 @@ class Bot8Runner:
             self._strat.state.position = "short"
             self._strat.state.entry_price = signal.price
             self._strat.state.entry_qty = signal.qty
+            self._strat.state.on_open()
             if self._strat.state.win_streak >= self._strat.am_stk_min:
                 self._strat.state.consec_3x += 1
             await telegram.notify_trade("short", signal.qty, signal.price, signal.sl_price, signal.tp_price)

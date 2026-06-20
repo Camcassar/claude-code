@@ -17,7 +17,7 @@ import pandas as pd
 
 @dataclass
 class Signal:
-    action: Literal["buy", "sell", "short", "cover", "hold"]
+    action: Literal["buy", "sell", "short", "cover", "hold", "time_exit"]
     qty: float
     price: float
     sl_price: float
@@ -33,11 +33,20 @@ class StrategyState:
     position: Literal["long", "short", "flat"] = "flat"
     entry_price: float = 0.0
     entry_qty: float = 0.0
+    bars_held: int = 0
+
+    def on_open(self) -> None:
+        self.bars_held = 0
+
+    def on_bar(self) -> None:
+        if self.position != "flat":
+            self.bars_held += 1
 
     def on_close(self, pnl: float) -> None:
         self.position = "flat"
         self.entry_price = 0.0
         self.entry_qty = 0.0
+        self.bars_held = 0
         if pnl > 0:
             self.win_streak += 1
         else:
@@ -72,13 +81,14 @@ class AvaxSpectralStrategy:
         tc_thresh: float = 45.0,
         ema_fast: int = 20,
         ema_slow: int = 60,
-        sl_pct: float = 2.5,
-        tp_pct: float = 7.0,
+        sl_pct: float = 2.0,
+        tp_pct: float = 3.5,
         use_shorts: bool = True,
         am_mult_max: float = 2.0,
         am_mult_fallback: float = 1.5,
         am_stk_min: int = 2,
         max_consec_3x: int = 1,
+        time_exit_bars: int = 24,
     ) -> None:
         self.equity_pct = equity_pct
         self.tc_thresh = tc_thresh
@@ -91,10 +101,12 @@ class AvaxSpectralStrategy:
         self.am_mult_fallback = am_mult_fallback
         self.am_stk_min = am_stk_min
         self.max_consec_3x = max_consec_3x
+        self.time_exit_bars = time_exit_bars
         self.state = StrategyState()
 
     def evaluate(self, df: pd.DataFrame, equity: float = 130.0) -> Signal:
         """Evaluate on a dataframe of at least 300 closed 30m bars."""
+        self.state.on_bar()
         close = df["close"]
         price = float(close.iloc[-1])
 
@@ -124,6 +136,20 @@ class AvaxSpectralStrategy:
         qty = eff_cash / price
 
         pos = self.state.position
+
+        # Time exit: close if held too long regardless of signal
+        if pos != "flat" and self.state.bars_held >= self.time_exit_bars:
+            exit_action: Literal["buy", "sell", "short", "cover", "hold", "time_exit"] = "time_exit"
+            return Signal(
+                action=exit_action,
+                qty=self.state.entry_qty,
+                price=price,
+                sl_price=0.0,
+                tp_price=0.0,
+                centroid=c_val,
+                is_trending=is_trending,
+            )
+
         go_long = cross_up and is_trending
         go_short = cross_dn and is_trending and self.use_shorts
 

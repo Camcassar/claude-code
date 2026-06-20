@@ -191,6 +191,19 @@ class BybitConnector:
         LOG.info("position_closed", extra={"side": side, "qty": qty, "order": order.get("id")})
         return order
 
+    async def fetch_last_fill_price(self) -> float | None:
+        """Return the average fill price of the most recent closed trade, or None on error.
+
+        Used to record the real exit price (SL/TP fill) rather than the bar-close proxy.
+        """
+        try:
+            trades = await _with_backoff(lambda: self._ex.fetch_my_trades(self.symbol, limit=5))
+            if trades:
+                return float(trades[-1]["price"])
+        except Exception as e:
+            LOG.warning("fetch_last_fill_price_failed", extra={"error": str(e)})
+        return None
+
     async def enter_long(self, qty: float, sl: float, tp: float) -> dict:
         order = await _with_backoff(lambda: self._ex.create_order(
             symbol=self.symbol,
