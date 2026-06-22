@@ -14,8 +14,9 @@ strategy:
   tc_thresh: 45.0
   ema_fast: 20
   ema_slow: 60
-  sl_pct: 2.5
-  tp_pct: 7.0
+  sl_pct: 2.0
+  tp_pct: 3.5
+  time_exit_bars: 24    # close after 12h (24×30m) if neither SL nor TP fired
   use_shorts: true
 
 sizing:
