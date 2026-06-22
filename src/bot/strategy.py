@@ -116,8 +116,12 @@ class AvaxSpectralStrategy:
 
         ema_f = _ema(close, self.ema_fast_p)
         ema_s = _ema(close, self.ema_slow_p)
-        cross_up = float(ema_f.iloc[-1]) > float(ema_s.iloc[-1]) and float(ema_f.iloc[-2]) <= float(ema_s.iloc[-2])
-        cross_dn = float(ema_f.iloc[-1]) < float(ema_s.iloc[-1]) and float(ema_f.iloc[-2]) >= float(ema_s.iloc[-2])
+        # EMA alignment — enter whenever fast is above/below slow while flat.
+        # The old crossover-only logic (checking iloc[-2]) only fired on the
+        # single bar of the cross, missing entire established trends like the
+        # centroid=102+ trend currently showing as HOLD.
+        ema_above = float(ema_f.iloc[-1]) > float(ema_s.iloc[-1])
+        ema_below = float(ema_f.iloc[-1]) < float(ema_s.iloc[-1])
 
         atr_val = float(_atr(df).iloc[-1])
         norm_atr = atr_val / price
@@ -150,8 +154,8 @@ class AvaxSpectralStrategy:
                 is_trending=is_trending,
             )
 
-        go_long = cross_up and is_trending
-        go_short = cross_dn and is_trending and self.use_shorts
+        go_long = ema_above and is_trending
+        go_short = ema_below and is_trending and self.use_shorts
 
         if go_long and pos != "long":
             action: Literal["buy", "sell", "short", "cover", "hold"] = "buy" if pos == "flat" else "buy"
