@@ -1,90 +1,134 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Bot Command Center — registry
+# =============================================================================
+# Bot Command Center — REGISTRY (the single source of truth for "what bots exist")
 #
-# This is the single source of truth for "where are all my bots". Edit this
-# file to add/remove bots; the dashboard re-reads it on every refresh (no
-# restart needed).
+# Edit this file to add/remove bots; the dashboard re-reads it on every refresh
+# (no restart). Big-picture orientation: /CLAUDE.md at the repo root. How the
+# dashboard works: dashboard/README.md.
 #
-# Seeded on 2026-06-23 from what was discoverable on your GitHub account.
-# Anything living only on your Mac or only on Railway needs you to fill in the
-# `probe` block — those hosts aren't visible from a fresh cloud session.
+# Each entry:
+#   id     unique slug — history is keyed by it, so don't reuse/rename casually
+#   name   display name
+#   kind   free-form: trading | tool | desktop-app | scaffold | unknown
+#   host   free-form: railway | mac | localhost | github-only | cloud
+#   repo   optional URL (rendered as a link on the card)
+#   notes  optional blurb (shown on the card)
+#   tags   optional list of chips
+#   probe  how the dashboard decides if it's alive (types below)
 #
-# probe.type:  http | tcp | heartbeat_file | push | none   (see health.py)
-#   http            GET a URL; 2xx/3xx = up        (Railway web services, any HTTP bot)
-#   tcp             open host:port                 (local bots listening on a port)
-#   heartbeat_file  check a file's mtime           (local worker that touches a file)
-#   push            bot POSTs /api/heartbeat/<id>  (remote worker that can reach this)
-#   none            no probe — always "unknown"    (track manually)
-# ─────────────────────────────────────────────────────────────────────────────
+# PROBE TYPES (implemented in dashboard/health.py):
+#   http            GET url; 2xx/3xx = up           Railway web service / any HTTP bot
+#   tcp             open host:port                   local bot listening on a port
+#   process         pgrep -f "match" finds a PID     local Mac app/bot with no server
+#   heartbeat_file  file mtime fresh = up            local worker that touches a file
+#   push            bot POSTs /api/heartbeat/<id>    remote worker that can reach here
+#   none            always "unknown"                 inventory-only / track manually
+# =============================================================================
 
 bots:
+  # ── LIVE TRADING BOT — the ONLY actual trading bot found on GitHub ──────────
   - id: bot8
     name: "Bot 8 — AVAX Spectral"
     kind: trading
     host: railway
     repo: https://github.com/Camcassar/claude-code
     notes: >-
-      Live Bybit perp trader. AVAX/USDT:USDT, 3x leverage, 30m bars,
+      Live Bybit perp trader (this repo). AVAX/USDT:USDT, 3x leverage, 30m bars,
       EMA20/60 + spectral-centroid trend filter, SL 2% / TP 3.5%, Telegram alerts.
+      Deploys to Railway (railway.toml, restart=always).
     tags: [crypto, live, railway]
-    # Bot 8 is a Railway *worker* with no HTTP port, so localhost can't ping it.
-    # Two ways to make it show green here:
-    #   1) have the bot POST http://<dashboard-host>:8000/api/heartbeat/bot8 each
-    #      loop (type: push — see README), or
-    #   2) give it a Railway healthcheck URL and switch to type: http.
+    # Railway *worker* with no HTTP port → can't be pinged from your Mac.
+    # Make it report in: add to its 30m loop (see README "Wiring up"):
+    #     httpx.post(f"{DASH}/api/heartbeat/bot8", timeout=5)
+    # then it shows green. stale_after = one 30m bar + cushion.
     probe:
       type: push
-      stale_after: 2400          # 30m loop + cushion: stale if silent > 40 min
+      stale_after: 2400
 
+  # ── LOCAL MAC APPS — inspected via public GitHub; these are NOT trading bots ─
   - id: camflow
-    name: "CamFlow"
-    kind: unknown
-    host: github-only
+    name: "CamFlow (voice dictation)"
+    kind: desktop-app
+    host: mac
     repo: https://github.com/Camcassar/CamFlow
-    notes: "Newest repo after Bot 8 (Jun 2026), tiny. Possibly a bot scaffold — not yet inspected."
-    tags: [unverified]
+    notes: >-
+      NOT a trading bot. macOS menu-bar voice-dictation app: hold a hotkey, talk,
+      release → on-device Whisper transcribes and pastes into any app. Local-only,
+      launched with ./run.sh.
+    tags: [mac, voice, whisper, local]
+    # It's a menu-bar app, not a server. To turn its card green when it's running,
+    # switch to a process probe and set `match` to whatever it shows up as in
+    # `pgrep -fl` (e.g. the script path or app name):
     probe:
       type: none
+      # type: process
+      # match: "camflow"
 
   - id: yahoo-finance-tool
     name: "Yahoo Finance Tool"
     kind: tool
-    host: github-only
+    host: mac
     repo: https://github.com/Camcassar/yahoo-finance-tool
-    notes: "Market-data helper (Mar 2026). Likely a feeder for a strategy, not a standalone bot."
-    tags: [data, unverified]
+    notes: >-
+      NOT a bot. A Tkinter desktop GUI that pulls Yahoo Finance data via yfinance
+      and charts it (RSI, moving averages, news, earnings). Analysis only — places
+      no trades. Run on demand; not always-on, so it stays "unknown".
+    tags: [mac, data, gui, analysis]
     probe:
       type: none
 
-  # ── Add your Mac / Railway bots below ───────────────────────────────────────
-  # A local bot listening on a port:
-  # - id: local-scalper
-  #   name: "Local Scalper"
-  #   kind: trading
-  #   host: mac
-  #   notes: "Runs on my Mac"
-  #   tags: [local]
-  #   probe:
-  #     type: tcp
-  #     host: 127.0.0.1
-  #     port: 8001
+  # ── YOUR HIDDEN BOTS — fill these in ────────────────────────────────────────
+  # A cloud session can only see GitHub. Bots that live ONLY on your Mac or ONLY
+  # on Railway (never pushed to GitHub) are invisible from here — add them below.
+  # "Bot 8" implies Bots 1–7 existed; if any are real and running, they go here.
+  # Uncomment a template and edit it:
   #
-  # A Railway web service with a /healthz route:
+  # Local trading bot listening on a port:
   # - id: bot7
   #   name: "Bot 7"
   #   kind: trading
-  #   host: railway
-  #   probe:
-  #     type: http
-  #     url: https://bot7-production.up.railway.app/healthz
-  #     timeout: 5
+  #   host: mac
+  #   tags: [crypto, local]
+  #   probe: { type: tcp, host: 127.0.0.1, port: 8001 }
   #
-  # A local worker that touches a heartbeat file each loop:
-  # - id: data-collector
+  # Local Python bot with no server — detect the running process:
+  # - id: bot6
+  #   name: "Bot 6"
+  #   kind: trading
+  #   host: mac
+  #   probe: { type: process, match: "bot6/main.py" }
+  #
+  # Local worker that touches a heartbeat file each loop:
+  # - id: collector
   #   name: "Data Collector"
   #   kind: tool
   #   host: mac
-  #   probe:
-  #     type: heartbeat_file
-  #     path: ~/bots/data-collector/heartbeat
-  #     stale_after: 300
+  #   probe: { type: heartbeat_file, path: ~/bots/collector/heartbeat, stale_after: 300 }
+  #
+  # Railway web service exposing a health route:
+  # - id: bot5
+  #   name: "Bot 5"
+  #   kind: trading
+  #   host: railway
+  #   probe: { type: http, url: "https://bot5-production.up.railway.app/healthz", timeout: 5 }
+  #
+  # Railway worker that POSTs a heartbeat here (needs this dashboard reachable):
+  # - id: bot4
+  #   name: "Bot 4"
+  #   kind: trading
+  #   host: railway
+  #   probe: { type: push, stale_after: 2400 }
+
+# =============================================================================
+# DISCOVERY CHECKLIST — how to find the bots this session couldn't see.
+# Run these on your Mac (or have a Claude session running locally do it):
+#
+#   Railway:  `railway login` then `railway list`  (or the Railway dashboard) —
+#             note each project/service. HTTP service → http probe; worker → push.
+#   Mac (on disk):   ls ~ ; find ~ -maxdepth 3 -path "*bot*" -name "*.py" 2>/dev/null
+#   Mac (running):   pgrep -fal python | grep -i bot
+#   Mac (autostart): ls ~/Library/LaunchAgents
+#   GitHub:   `gh repo list Camcassar` — already triaged:
+#             claude-code = Bot 8 (only trading bot); CamFlow + yahoo-finance-tool
+#             = Mac apps (above); CC-claude = empty; software_testing /
+#             Software_tech / Workshop2 = 2024 coursework (not bots).
+# =============================================================================

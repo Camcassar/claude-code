@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import shutil
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -83,6 +85,33 @@ async def _check_tcp(probe: dict) -> ProbeResult:
         return ProbeResult(DOWN, f"{host}:{port} — {type(e).__name__}")
 
 
+async def _check_process(probe: dict) -> ProbeResult:
+    """Up if a process whose command line matches `match` is running (pgrep -f).
+
+    For local Mac apps/bots that have no port or HTTP route — e.g. CamFlow, or a
+    `python bot.py` you launched in a terminal. Use a specific pattern so it
+    doesn't match unrelated processes.
+    """
+    pattern = probe.get("match") or probe.get("pattern")
+    if not pattern:
+        return ProbeResult(UNKNOWN, "process probe missing 'match'")
+    if not shutil.which("pgrep"):
+        return ProbeResult(UNKNOWN, "pgrep not available on this host")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "pgrep", "-f", str(pattern),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        me = str(os.getpid())  # don't let a pattern match the dashboard's own process
+        pids = [p for p in out.decode().split() if p != me]
+        if pids:
+            return ProbeResult(UP, f"running · pid {pids[0]}" + (f" (+{len(pids)-1})" if len(pids) > 1 else ""))
+        return ProbeResult(DOWN, f"no process matching '{pattern}'")
+    except Exception as e:  # noqa: BLE001
+        return ProbeResult(UNKNOWN, f"pgrep error: {type(e).__name__}")
+
+
 def _check_heartbeat_file(probe: dict) -> ProbeResult:
     raw = probe.get("path")
     if not raw:
@@ -124,6 +153,8 @@ async def probe_bot(bot: dict, heartbeats: dict[str, float]) -> dict[str, Any]:
             result = await _check_http(probe)
         elif ptype == "tcp":
             result = await _check_tcp(probe)
+        elif ptype == "process":
+            result = await _check_process(probe)
         elif ptype == "heartbeat_file":
             result = _check_heartbeat_file(probe)
         elif ptype == "push":

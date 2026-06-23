@@ -299,8 +299,8 @@ async function load() {
   renderSummary(data.summary);
   render();
   document.getElementById("footer").textContent =
-    `tracking ${data.bots.length} bot(s) · ${data.summary.checks} samples · `
-    + `${data.summary.window}-sample window · refresh ${data.refresh_hint}s`;
+    `tracking ${data.bots.length} bot(s) · ${data.summary.checks} samples in 24h · `
+    + `persisted to SQLite · refresh ${data.refresh_hint}s`;
 }
 
 function detectTransitions(bots) {
@@ -395,7 +395,7 @@ function card(b, delay) {
     <div class="spark">${spark}</div>
     <div class="foot">
       ${tags}
-      <span class="uptime">▲ ${b.uptime_pct}% · ${b.checks} checks</span>
+      <span class="uptime">▲ ${b.uptime_pct}% uptime/24h</span>
       ${repo}
     </div>
   </div>`;

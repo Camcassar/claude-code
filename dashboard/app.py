@@ -6,22 +6,31 @@ Run it on your Mac:
     pip install -r requirements.txt
     python app.py                      # -> http://localhost:8000
 
-Edit ``bots.yaml`` to register bots; the page re-reads it on every refresh, so
-you never need to restart to add a bot.
+Edit bots.yaml to register bots; the page re-reads it on every refresh, so you
+never restart to add a bot. History is persisted to SQLite (store.py) so uptime
+survives restarts, and optional Telegram alerts (notify.py) fire on status
+changes. Full orientation for this whole setup lives in /CLAUDE.md at the root.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import time
-from collections import defaultdict, deque
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import notify
+import store
 from health import probe_all
+
+HERE = Path(__file__).resolve().parent
+load_dotenv(HERE / ".env")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,21 +38,23 @@ logging.basicConfig(
 )
 LOG = logging.getLogger("command-center")
 
-HERE = Path(__file__).resolve().parent
 REGISTRY = HERE / "bots.yaml"
 STATIC = HERE / "static"
 
-REFRESH_SECONDS = 15
-HISTORY_MAX = 120  # ~30 min of samples at the default 15s cadence
+REFRESH_SECONDS = int(os.getenv("CC_REFRESH_SECONDS", "15"))
+HISTORY_MAX = 120                       # samples shown in each card's sparkline
+UPTIME_WINDOW = 24 * 3600               # uptime % computed over this trailing window
+
+DB_PATH = os.getenv("CC_DB_PATH") or str(HERE / "data" / "command_center.db")
+if not Path(DB_PATH).is_absolute():
+    DB_PATH = str(HERE / DB_PATH)
+RETENTION_DAYS = float(os.getenv("CC_RETENTION_DAYS", "7"))
+
+store.init(DB_PATH, RETENTION_DAYS)
+LOG.info("persistence: %s (retention %sd)", DB_PATH, RETENTION_DAYS)
+LOG.info("telegram alerts: %s", "on" if notify.enabled() else "off")
 
 app = FastAPI(title="Bot Command Center")
-
-# Rolling per-bot history of probe results, plus the timestamp each bot entered
-# its current status. In-memory only — resets on restart, which is fine for a
-# local dashboard. Push check-ins land in _heartbeats.
-_history: dict[str, deque] = defaultdict(lambda: deque(maxlen=HISTORY_MAX))
-_state: dict[str, dict] = {}
-_heartbeats: dict[str, float] = {}
 
 
 def _load_registry() -> list[dict]:
@@ -52,39 +63,44 @@ def _load_registry() -> list[dict]:
         return []
     data = yaml.safe_load(REGISTRY.read_text()) or {}
     bots = data.get("bots", []) or []
-    # Keep only entries with an id — history is keyed by it.
     return [b for b in bots if isinstance(b, dict) and b.get("id")]
 
 
-def _record(bot_id: str, status: str, latency: float | None, now: float) -> float:
-    """Append a sample and return the timestamp this status started."""
-    _history[bot_id].append({"t": now, "status": status, "latency": latency})
-    st = _state.get(bot_id)
-    if st is None or st["status"] != status:
-        st = {"status": status, "since": now}
-        _state[bot_id] = st
-    return st["since"]
+def _streak_start(samples: list[dict], status: str, now: float) -> float:
+    """Timestamp the current status streak began (clamped to the loaded window)."""
+    since = now
+    for s in reversed(samples):
+        if s["status"] == status:
+            since = s["t"]
+        else:
+            break
+    return since
 
 
 @app.get("/api/status")
 async def api_status() -> JSONResponse:
     now = time.time()
     bots = _load_registry()
-    results = await probe_all(bots, _heartbeats)
+    heartbeats = store.load_heartbeats()
+    results = await probe_all(bots, heartbeats)
 
     summary = {"up": 0, "down": 0, "stale": 0, "unknown": 0, "total": len(results)}
     enriched: list[dict] = []
     latencies: list[float] = []
-    total_samples = up_samples = 0
+    up_total = sample_total = 0
+    transitions: list[tuple[dict, str]] = []
 
     for r in results:
         bid = r["id"]
-        since = _record(bid, r["status"], r.get("latency_ms"), now)
-        hist = list(_history[bid])
-        statuses = [h["status"] for h in hist]
-        up_ct = sum(1 for s in statuses if s == "up")
-        total_samples += len(statuses)
-        up_samples += up_ct
+        prev = store.last_status(bid)
+        store.record(bid, now, r["status"], r.get("latency_ms"))
+        if prev and prev != r["status"]:
+            transitions.append((r, prev))
+
+        hist = store.recent(bid, HISTORY_MAX)
+        tot, up = store.uptime(bid, now - UPTIME_WINDOW)
+        up_total += up
+        sample_total += tot
 
         summary[r["status"]] = summary.get(r["status"], 0) + 1
         if r["status"] == "up" and r.get("latency_ms") is not None:
@@ -92,21 +108,21 @@ async def api_status() -> JSONResponse:
 
         enriched.append({
             **r,
-            "history": statuses,
+            "history": [h["status"] for h in hist],
             "latency_history": [h["latency"] for h in hist],
-            "uptime_pct": round(100 * up_ct / len(statuses), 1) if statuses else 0.0,
-            "checks": len(statuses),
-            "since": since,
+            "uptime_pct": round(100 * up / tot, 1) if tot else 0.0,
+            "checks": tot,
+            "since": _streak_start(hist, r["status"], now),
         })
 
-    summary["overall_uptime"] = (
-        round(100 * up_samples / total_samples, 1) if total_samples else 0.0
-    )
-    summary["avg_latency_ms"] = (
-        round(sum(latencies) / len(latencies), 1) if latencies else None
-    )
-    summary["checks"] = total_samples
+    summary["overall_uptime"] = round(100 * up_total / sample_total, 1) if sample_total else 0.0
+    summary["avg_latency_ms"] = round(sum(latencies) / len(latencies), 1) if latencies else None
+    summary["checks"] = sample_total
     summary["window"] = HISTORY_MAX
+
+    for r, prev in transitions:
+        LOG.info("transition %s: %s -> %s", r["id"], prev, r["status"])
+        asyncio.create_task(notify.transition(r, prev))
 
     return JSONResponse({
         "generated_at": now,
@@ -119,13 +135,14 @@ async def api_status() -> JSONResponse:
 @app.post("/api/heartbeat/{bot_id}")
 async def api_heartbeat(bot_id: str) -> JSONResponse:
     """Push-style bots POST here each loop to report they're alive."""
-    _heartbeats[bot_id] = time.time()
-    return JSONResponse({"ok": True, "bot_id": bot_id, "at": _heartbeats[bot_id]})
+    now = time.time()
+    store.save_heartbeat(bot_id, now)
+    return JSONResponse({"ok": True, "bot_id": bot_id, "at": now})
 
 
 @app.get("/api/bots")
 async def api_bots() -> JSONResponse:
-    """Raw registry, for debugging what the dashboard loaded."""
+    """Raw registry the server loaded — handy for debugging bots.yaml."""
     return JSONResponse({"bots": _load_registry()})
 
 
@@ -140,5 +157,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 if __name__ == "__main__":
     import uvicorn
 
-    LOG.info("Bot Command Center → http://localhost:8000")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    host = os.getenv("CC_HOST", "127.0.0.1")
+    port = int(os.getenv("CC_PORT", "8000"))
+    LOG.info("Bot Command Center → http://%s:%s", host, port)
+    uvicorn.run(app, host=host, port=port)
