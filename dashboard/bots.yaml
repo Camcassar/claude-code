@@ -1,0 +1,90 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Bot Command Center — registry
+#
+# This is the single source of truth for "where are all my bots". Edit this
+# file to add/remove bots; the dashboard re-reads it on every refresh (no
+# restart needed).
+#
+# Seeded on 2026-06-23 from what was discoverable on your GitHub account.
+# Anything living only on your Mac or only on Railway needs you to fill in the
+# `probe` block — those hosts aren't visible from a fresh cloud session.
+#
+# probe.type:  http | tcp | heartbeat_file | push | none   (see health.py)
+#   http            GET a URL; 2xx/3xx = up        (Railway web services, any HTTP bot)
+#   tcp             open host:port                 (local bots listening on a port)
+#   heartbeat_file  check a file's mtime           (local worker that touches a file)
+#   push            bot POSTs /api/heartbeat/<id>  (remote worker that can reach this)
+#   none            no probe — always "unknown"    (track manually)
+# ─────────────────────────────────────────────────────────────────────────────
+
+bots:
+  - id: bot8
+    name: "Bot 8 — AVAX Spectral"
+    kind: trading
+    host: railway
+    repo: https://github.com/Camcassar/claude-code
+    notes: >-
+      Live Bybit perp trader. AVAX/USDT:USDT, 3x leverage, 30m bars,
+      EMA20/60 + spectral-centroid trend filter, SL 2% / TP 3.5%, Telegram alerts.
+    tags: [crypto, live, railway]
+    # Bot 8 is a Railway *worker* with no HTTP port, so localhost can't ping it.
+    # Two ways to make it show green here:
+    #   1) have the bot POST http://<dashboard-host>:8000/api/heartbeat/bot8 each
+    #      loop (type: push — see README), or
+    #   2) give it a Railway healthcheck URL and switch to type: http.
+    probe:
+      type: push
+      stale_after: 2400          # 30m loop + cushion: stale if silent > 40 min
+
+  - id: camflow
+    name: "CamFlow"
+    kind: unknown
+    host: github-only
+    repo: https://github.com/Camcassar/CamFlow
+    notes: "Newest repo after Bot 8 (Jun 2026), tiny. Possibly a bot scaffold — not yet inspected."
+    tags: [unverified]
+    probe:
+      type: none
+
+  - id: yahoo-finance-tool
+    name: "Yahoo Finance Tool"
+    kind: tool
+    host: github-only
+    repo: https://github.com/Camcassar/yahoo-finance-tool
+    notes: "Market-data helper (Mar 2026). Likely a feeder for a strategy, not a standalone bot."
+    tags: [data, unverified]
+    probe:
+      type: none
+
+  # ── Add your Mac / Railway bots below ───────────────────────────────────────
+  # A local bot listening on a port:
+  # - id: local-scalper
+  #   name: "Local Scalper"
+  #   kind: trading
+  #   host: mac
+  #   notes: "Runs on my Mac"
+  #   tags: [local]
+  #   probe:
+  #     type: tcp
+  #     host: 127.0.0.1
+  #     port: 8001
+  #
+  # A Railway web service with a /healthz route:
+  # - id: bot7
+  #   name: "Bot 7"
+  #   kind: trading
+  #   host: railway
+  #   probe:
+  #     type: http
+  #     url: https://bot7-production.up.railway.app/healthz
+  #     timeout: 5
+  #
+  # A local worker that touches a heartbeat file each loop:
+  # - id: data-collector
+  #   name: "Data Collector"
+  #   kind: tool
+  #   host: mac
+  #   probe:
+  #     type: heartbeat_file
+  #     path: ~/bots/data-collector/heartbeat
+  #     stale_after: 300

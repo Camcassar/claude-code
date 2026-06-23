@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bot Command Center</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>" />
+<style>
+  :root {
+    --bg: #07090f;
+    --bg2: #0b0f1a;
+    --panel: rgba(255,255,255,.04);
+    --panel-2: rgba(255,255,255,.06);
+    --border: rgba(255,255,255,.09);
+    --border-strong: rgba(255,255,255,.16);
+    --text: #e9eef7;
+    --muted: #8a93a6;
+    --faint: #5b6376;
+    --up: #2ee6a6;
+    --down: #ff5d6c;
+    --stale: #ffc24b;
+    --unknown: #7d8597;
+    --accent: #7c8bff;
+    --accent2: #59e6ff;
+    --shadow: 0 10px 40px rgba(0,0,0,.45);
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    color: var(--text);
+    background: var(--bg);
+    font: 14px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  /* ambient gradient blobs */
+  body::before, body::after {
+    content: ""; position: fixed; z-index: -1; filter: blur(90px); opacity: .55;
+    border-radius: 50%; pointer-events: none;
+  }
+  body::before { width: 52vw; height: 52vw; left: -12vw; top: -16vw;
+    background: radial-gradient(circle at 30% 30%, #3b2d7a, transparent 60%); }
+  body::after { width: 48vw; height: 48vw; right: -14vw; bottom: -18vw;
+    background: radial-gradient(circle at 60% 60%, #0e5563, transparent 60%); }
+
+  #bar { position: fixed; top: 0; left: 0; height: 3px; width: 0;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    box-shadow: 0 0 12px var(--accent2); z-index: 50; }
+
+  header {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    padding: 22px 30px 14px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand .logo { font-size: 26px; filter: drop-shadow(0 0 10px rgba(124,139,255,.6)); }
+  .brand h1 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: .2px; }
+  .brand .sub { color: var(--muted); font-size: 12.5px; margin-top: 1px; }
+  .brand .sub code { color: var(--accent2); background: rgba(89,230,255,.08);
+    padding: 1px 6px; border-radius: 5px; font-size: 11.5px; }
+  .head-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .clock { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px;
+    padding: 7px 12px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--panel); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 13px; font-size: 13px; transition: .15s;
+    font-family: inherit; }
+  .btn:hover { border-color: var(--border-strong); background: var(--panel-2); }
+  .btn.live { color: var(--up); }
+  .btn .cd { font-variant-numeric: tabular-nums; color: var(--faint); font-size: 12px; }
+
+  /* hero */
+  .hero { display: grid; grid-template-columns: auto 1fr; gap: 22px;
+    padding: 8px 30px 6px; align-items: stretch; }
+  @media (max-width: 720px){ .hero{ grid-template-columns: 1fr; } }
+  .ring-card, .tiles { background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); backdrop-filter: blur(10px); }
+  .ring-card { display: flex; align-items: center; gap: 18px; padding: 20px 26px; }
+  .ring { position: relative; width: 124px; height: 124px; }
+  .ring svg { transform: rotate(-90deg); }
+  .ring .track { stroke: rgba(255,255,255,.08); }
+  .ring .prog { stroke: url(#grad); stroke-linecap: round;
+    transition: stroke-dashoffset .7s cubic-bezier(.2,.8,.2,1); }
+  .ring .center { position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; }
+  .ring .center .pct { font-size: 27px; font-weight: 750; font-variant-numeric: tabular-nums;
+    letter-spacing: -.5px; }
+  .ring .center .lbl { font-size: 10px; letter-spacing: 1.4px; color: var(--muted);
+    text-transform: uppercase; }
+  .ring-meta .big { font-size: 15px; font-weight: 600; }
+  .ring-meta .small { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(5, 1fr); }
+  @media (max-width: 980px){ .tiles{ grid-template-columns: repeat(2,1fr);} }
+  .tile { padding: 16px 18px; border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 4px; position: relative; }
+  .tile:last-child { border-right: none; }
+  .tile .k { font-size: 11px; letter-spacing: .8px; text-transform: uppercase; color: var(--muted);
+    display: flex; align-items: center; gap: 7px; }
+  .tile .v { font-size: 26px; font-weight: 720; font-variant-numeric: tabular-nums;
+    letter-spacing: -.5px; line-height: 1.1; }
+  .tile .v small { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+  /* toolbar */
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 16px 30px 4px; }
+  .search { flex: 1 1 260px; display: flex; align-items: center; gap: 9px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 11px;
+    padding: 9px 13px; }
+  .search input { background: none; border: none; outline: none; color: var(--text);
+    width: 100%; font-size: 13.5px; font-family: inherit; }
+  .search input::placeholder { color: var(--faint); }
+  .seg { display: flex; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 11px; overflow: hidden; }
+  .seg button { background: none; border: none; color: var(--muted); cursor: pointer;
+    padding: 9px 13px; font-size: 12.5px; font-family: inherit; transition: .15s; }
+  .seg button.active { color: var(--text); background: var(--panel-2); }
+  .seg button:hover { color: var(--text); }
+  .seg .cap { color: var(--faint); padding: 9px 8px 9px 12px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .8px; align-self: center; }
+
+  main { padding: 10px 30px 60px; }
+  .group { margin-top: 22px; }
+  .group > h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--muted); margin: 0 0 13px; display: flex; align-items: center; gap: 10px; }
+  .group > h2 .count { color: var(--faint); }
+  .group > h2::after { content: ""; flex: 1; height: 1px;
+    background: linear-gradient(90deg, var(--border), transparent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 15px; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 17px 18px 15px; box-shadow: var(--shadow); backdrop-filter: blur(8px);
+    position: relative; overflow: hidden; transition: transform .18s, border-color .18s;
+    animation: rise .5s both; }
+  .card:hover { transform: translateY(-3px); border-color: var(--border-strong); }
+  .card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+  .card.up::before { background: var(--up); box-shadow: 0 0 14px var(--up); }
+  .card.down::before { background: var(--down); box-shadow: 0 0 14px var(--down); }
+  .card.stale::before { background: var(--stale); box-shadow: 0 0 14px var(--stale); }
+  .card.unknown::before { background: var(--unknown); }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  .card .top { display: flex; align-items: center; gap: 10px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .dot.up { background: var(--up); box-shadow: 0 0 0 0 rgba(46,230,166,.55); animation: pulse 2s infinite; }
+  .dot.down { background: var(--down); }
+  .dot.stale { background: var(--stale); }
+  .dot.unknown { background: var(--unknown); }
+  @keyframes pulse { 0%{ box-shadow: 0 0 0 0 rgba(46,230,166,.5);} 70%{ box-shadow: 0 0 0 8px rgba(46,230,166,0);} 100%{ box-shadow:0 0 0 0 rgba(46,230,166,0);} }
+  .card .name { font-weight: 650; font-size: 14.5px; }
+  .card .pill { margin-left: auto; font-size: 10.5px; font-weight: 700; letter-spacing: .8px;
+    text-transform: uppercase; padding: 4px 9px; border-radius: 999px; }
+  .pill.up { color: var(--up); background: rgba(46,230,166,.12); }
+  .pill.down { color: var(--down); background: rgba(255,93,108,.13); }
+  .pill.stale { color: var(--stale); background: rgba(255,194,75,.13); }
+  .pill.unknown { color: var(--unknown); background: rgba(125,133,151,.14); }
+
+  .card .detail { color: var(--muted); font-size: 12.5px; margin-top: 9px;
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .card .detail .sep { color: var(--faint); }
+  .card .notes { font-size: 12.5px; color: var(--text); opacity: .82; margin-top: 10px; }
+
+  .spark { display: flex; gap: 2px; align-items: flex-end; height: 30px; margin-top: 13px; }
+  .spark .s { flex: 1; min-width: 2px; border-radius: 2px; opacity: .9;
+    background: var(--unknown); transition: height .3s; }
+  .spark .s.up { background: var(--up); }
+  .spark .s.down { background: var(--down); }
+  .spark .s.stale { background: var(--stale); }
+  .spark .s.unknown { background: rgba(125,133,151,.4); }
+
+  .card .foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 13px; }
+  .tag { font-size: 11px; background: rgba(255,255,255,.05); border: 1px solid var(--border);
+    color: var(--muted); padding: 2px 9px; border-radius: 999px; }
+  .uptime { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .card a.repo { margin-left: auto; color: var(--accent2); text-decoration: none; font-size: 12px; }
+  .card a.repo:hover { text-decoration: underline; }
+  .host-chip { font-size: 11px; color: var(--muted); padding: 2px 8px; border-radius: 6px;
+    background: rgba(255,255,255,.04); border: 1px solid var(--border); }
+
+  /* toasts */
+  #toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column;
+    gap: 10px; z-index: 60; }
+  .toast { background: var(--bg2); border: 1px solid var(--border-strong); border-left: 3px solid;
+    border-radius: 11px; padding: 12px 15px; min-width: 240px; box-shadow: var(--shadow);
+    animation: slidein .3s both; font-size: 13px; }
+  .toast.down { border-left-color: var(--down); }
+  .toast.stale { border-left-color: var(--stale); }
+  .toast.up { border-left-color: var(--up); }
+  .toast b { display: block; margin-bottom: 2px; }
+  .toast .m { color: var(--muted); font-size: 12px; }
+  @keyframes slidein { from { opacity: 0; transform: translateX(20px);} to { opacity:1; transform:none; } }
+
+  .empty { text-align: center; color: var(--muted); padding: 70px 20px; }
+  .empty .big { font-size: 16px; color: var(--text); margin-bottom: 6px; }
+  footer { text-align: center; color: var(--faint); font-size: 11.5px; padding: 20px; }
+</style>
+</head>
+<body>
+<div id="bar"></div>
+
+<header>
+  <div class="brand">
+    <span class="logo">🛰️</span>
+    <div>
+      <h1>Bot Command Center</h1>
+      <div class="sub">one view of every bot in <code>bots.yaml</code></div>
+    </div>
+  </div>
+  <div class="head-right">
+    <span class="clock" id="clock">—</span>
+    <button class="btn" id="pauseBtn" onclick="togglePause()">⏸ Pause</button>
+    <button class="btn live" onclick="refreshNow()">↻ Refresh <span class="cd" id="cd"></span></button>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="ring-card">
+    <div class="ring">
+      <svg width="124" height="124" viewBox="0 0 124 124">
+        <defs>
+          <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#7c8bff"/>
+            <stop offset="1" stop-color="#59e6ff"/>
+          </linearGradient>
+        </defs>
+        <circle class="track" cx="62" cy="62" r="52" fill="none" stroke-width="12"/>
+        <circle class="prog" id="ring" cx="62" cy="62" r="52" fill="none" stroke-width="12"
+          stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+      </svg>
+      <div class="center">
+        <span class="pct" id="ringPct">—</span>
+        <span class="lbl">uptime</span>
+      </div>
+    </div>
+    <div class="ring-meta">
+      <div class="big" id="fleetLine">Fleet health</div>
+      <div class="small" id="fleetSub">waiting for first check…</div>
+    </div>
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><div class="k"><span class="dot up"></span>Online</div><div class="v" id="t-up">—</div></div>
+    <div class="tile"><div class="k"><span class="dot down"></span>Down</div><div class="v" id="t-down">—</div></div>
+    <div class="tile"><div class="k"><span class="dot stale"></span>Stale</div><div class="v" id="t-stale">—</div></div>
+    <div class="tile"><div class="k"><span class="dot unknown"></span>Unknown</div><div class="v" id="t-unknown">—</div></div>
+    <div class="tile"><div class="k">Avg latency</div><div class="v" id="t-lat">—<small> ms</small></div></div>
+  </div>
+</section>
+
+<div class="toolbar">
+  <label class="search">
+    <span>🔍</span>
+    <input id="search" placeholder="Filter by name, tag, host, kind…" oninput="render()" />
+  </label>
+  <div class="seg" id="groupSeg">
+    <span class="cap">Group</span>
+    <button data-g="host" class="active" onclick="setGroup('host')">Host</button>
+    <button data-g="kind" onclick="setGroup('kind')">Kind</button>
+    <button data-g="status" onclick="setGroup('status')">Status</button>
+    <button data-g="none" onclick="setGroup('none')">None</button>
+  </div>
+</div>
+
+<main id="main">
+  <div class="empty"><div class="big">Connecting…</div>Starting the first health sweep.</div>
+</main>
+
+<footer id="footer"></footer>
+<div id="toasts"></div>
+
+<script>
+const RING_C = 326.7;
+const STATUS_RANK = { down: 0, stale: 1, unknown: 2, up: 3 };
+const STATUS_LABEL = { up: "Online", down: "Down", stale: "Stale", unknown: "Unknown" };
+
+let REFRESH_MS = 15000;
+let paused = false;
+let nextAt = Date.now() + REFRESH_MS;
+let latest = null;             // last payload
+let prevStatus = {};           // id -> status (for transition toasts)
+let groupBy = localStorage.getItem("cc.group") || "host";
+let firstRender = true;
+
+/* ---------- data ---------- */
+async function load() {
+  startBar();
+  let data;
+  try {
+    const res = await fetch("/api/status", { cache: "no-store" });
+    data = await res.json();
+  } catch (e) {
+    document.getElementById("fleetSub").textContent = "API unreachable — is app.py running?";
+    return;
+  }
+  latest = data;
+  detectTransitions(data.bots);
+  renderSummary(data.summary);
+  render();
+  document.getElementById("footer").textContent =
+    `tracking ${data.bots.length} bot(s) · ${data.summary.checks} samples · `
+    + `${data.summary.window}-sample window · refresh ${data.refresh_hint}s`;
+}
+
+function detectTransitions(bots) {
+  for (const b of bots) {
+    const prev = prevStatus[b.id];
+    if (prev && prev !== b.status) {
+      if (b.status === "down") toast("down", b.name, "went DOWN — " + (b.detail || ""));
+      else if (b.status === "stale") toast("stale", b.name, "went STALE — " + (b.detail || ""));
+      else if (b.status === "up" && prev !== "unknown") toast("up", b.name, "recovered ✓");
+    }
+    prevStatus[b.id] = b.status;
+  }
+}
+
+/* ---------- summary ---------- */
+function renderSummary(s) {
+  tween(document.getElementById("t-up"), s.up);
+  tween(document.getElementById("t-down"), s.down);
+  tween(document.getElementById("t-stale"), s.stale);
+  tween(document.getElementById("t-unknown"), s.unknown);
+  document.getElementById("t-lat").innerHTML =
+    (s.avg_latency_ms != null ? Math.round(s.avg_latency_ms) : "—") + "<small> ms</small>";
+
+  const pct = s.overall_uptime ?? 0;
+  document.getElementById("ring").style.strokeDashoffset = RING_C * (1 - pct / 100);
+  tween(document.getElementById("ringPct"), pct, "%", 1);
+  const healthy = s.up, total = s.total || 0;
+  document.getElementById("fleetLine").textContent =
+    total ? `${healthy}/${total} bots online` : "No bots registered";
+  document.getElementById("fleetSub").textContent =
+    total ? `${s.down} down · ${s.stale} stale · ${s.unknown} unknown` : "Add bots to bots.yaml";
+}
+
+/* ---------- cards ---------- */
+function render() {
+  if (!latest) return;
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  let bots = latest.bots.slice();
+  if (q) bots = bots.filter(b =>
+    [b.name, b.host, b.kind, b.probe_type, (b.tags || []).join(" "), b.notes]
+      .join(" ").toLowerCase().includes(q));
+
+  const main = document.getElementById("main");
+  if (!bots.length) {
+    main.innerHTML = `<div class="empty"><div class="big">No matches</div>`
+      + `${latest.bots.length ? "Nothing matches your filter." : "Your registry is empty — edit bots.yaml."}</div>`;
+    return;
+  }
+
+  const groups = {};
+  for (const b of bots) {
+    const key = groupBy === "none" ? "All bots"
+      : groupBy === "status" ? STATUS_LABEL[b.status]
+      : (b[groupBy] || "—");
+    (groups[key] = groups[key] || []).push(b);
+  }
+  const keys = Object.keys(groups).sort((a, b) =>
+    groupBy === "status" ? rankStatusLabel(a) - rankStatusLabel(b) : a.localeCompare(b));
+
+  let html = "", delay = 0;
+  for (const key of keys) {
+    const list = groups[key].sort((a, b) =>
+      (STATUS_RANK[a.status] - STATUS_RANK[b.status]) || a.name.localeCompare(b.name));
+    html += `<section class="group"><h2>${esc(key)} <span class="count">${list.length}</span></h2><div class="grid">`;
+    for (const b of list) { html += card(b, delay); delay += 35; }
+    html += `</div></section>`;
+  }
+  main.innerHTML = html;
+  firstRender = false;
+}
+
+function card(b, delay) {
+  const spark = sparkline(b.history, b.latency_history);
+  const tags = (b.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join("");
+  const repo = b.repo ? `<a class="repo" href="${esc(b.repo)}" target="_blank" rel="noopener">repo ↗</a>` : "";
+  const lat = b.latency_ms != null ? `<span class="sep">·</span><span>${Math.round(b.latency_ms)} ms</span>` : "";
+  const since = b.since ? `<span class="sep">·</span><span>${ago(b.since)} in state</span>` : "";
+  const anim = firstRender ? `style="animation-delay:${delay}ms"` : `style="animation:none"`;
+  return `
+  <div class="card ${b.status}" ${anim}>
+    <div class="top">
+      <span class="dot ${b.status}"></span>
+      <span class="name">${esc(b.name)}</span>
+      <span class="pill ${b.status}">${b.status}</span>
+    </div>
+    <div class="detail">
+      <span class="host-chip">${esc(b.host)}</span>
+      <span>${esc(b.detail || "")}</span>${lat}
+      <span class="sep">·</span><span>via ${esc(b.probe_type)}</span>${since}
+    </div>
+    ${b.notes ? `<div class="notes">${esc(b.notes)}</div>` : ""}
+    <div class="spark">${spark}</div>
+    <div class="foot">
+      ${tags}
+      <span class="uptime">▲ ${b.uptime_pct}% · ${b.checks} checks</span>
+      ${repo}
+    </div>
+  </div>`;
+}
+
+function sparkline(hist, lat) {
+  const N = 34;
+  const h = (hist || []).slice(-N);
+  const l = (lat || []).slice(-N);
+  // scale heights by latency where we have it, else full height for up.
+  const max = Math.max(40, ...l.filter(x => x != null));
+  const pad = N - h.length;
+  let out = "";
+  for (let i = 0; i < pad; i++) out += `<div class="s unknown" style="height:3px"></div>`;
+  h.forEach((s, i) => {
+    const v = l[i];
+    let pctH = s === "up" ? (v != null ? Math.max(18, (v / max) * 100) : 65)
+      : s === "down" ? 100 : s === "stale" ? 55 : 8;
+    out += `<div class="s ${s}" style="height:${Math.min(100, pctH)}%" title="${s}${v != null ? " · " + Math.round(v) + "ms" : ""}"></div>`;
+  });
+  return out;
+}
+
+/* ---------- controls ---------- */
+function setGroup(g) {
+  groupBy = g; localStorage.setItem("cc.group", g);
+  document.querySelectorAll("#groupSeg button").forEach(btn =>
+    btn.classList.toggle("active", btn.dataset.g === g));
+  render();
+}
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById("pauseBtn");
+  btn.innerHTML = paused ? "▶ Resume" : "⏸ Pause";
+  btn.classList.toggle("live", paused);
+  if (!paused) { nextAt = Date.now() + REFRESH_MS; }
+}
+function refreshNow() { load(); nextAt = Date.now() + REFRESH_MS; }
+
+/* ---------- scheduler / chrome ---------- */
+function startBar() {
+  const bar = document.getElementById("bar");
+  bar.style.transition = "none"; bar.style.width = "0";
+  void bar.offsetWidth;
+  bar.style.transition = "width .8s ease"; bar.style.width = "70%";
+}
+function endBar() {
+  const bar = document.getElementById("bar");
+  bar.style.width = "100%";
+  setTimeout(() => { bar.style.transition = "opacity .4s"; bar.style.opacity = "0";
+    setTimeout(() => { bar.style.opacity = "1"; bar.style.width = "0"; }, 400); }, 250);
+}
+function ticker() {
+  const now = Date.now();
+  document.getElementById("clock").textContent = new Date().toLocaleTimeString();
+  const left = Math.max(0, Math.ceil((nextAt - now) / 1000));
+  document.getElementById("cd").textContent = paused ? "" : `${left}s`;
+  if (!paused && now >= nextAt) { nextAt = now + REFRESH_MS; load().then(endBar); }
+}
+
+/* ---------- utils ---------- */
+function tween(el, to, suffix = "", decimals = 0) {
+  const from = parseFloat(el.dataset.v || "0");
+  el.dataset.v = to;
+  const start = performance.now(), dur = 600;
+  function step(t) {
+    const k = Math.min(1, (t - start) / dur);
+    const e = 1 - Math.pow(1 - k, 3);
+    const val = from + (to - from) * e;
+    el.textContent = val.toFixed(decimals) + suffix;
+    if (k < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+function ago(ts) {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (s < 60) return s + "s"; if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d";
+}
+function rankStatusLabel(l) {
+  const m = { Down: 0, Stale: 1, Unknown: 2, Online: 3 }; return m[l] ?? 9;
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function toast(kind, name, msg) {
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.innerHTML = `<b>${esc(name)}</b><span class="m">${esc(msg)}</span>`;
+  document.getElementById("toasts").appendChild(el);
+  setTimeout(() => { el.style.transition = "opacity .4s, transform .4s";
+    el.style.opacity = "0"; el.style.transform = "translateX(20px)";
+    setTimeout(() => el.remove(), 400); }, 6000);
+}
+
+/* ---------- boot ---------- */
+setGroup(groupBy);
+load().then(endBar);
+setInterval(ticker, 250);
+</script>
+</body>
+</html>
