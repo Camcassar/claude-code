@@ -157,8 +157,15 @@ class MomentumZBot:
         else:
             status_str = f"Watching — z is {pct_to_thr:.0f}% of threshold"
 
+        try:
+            equity = self.ex.get_equity()
+            equity_str = f"`{equity:.2f} USDT`"
+        except Exception:
+            equity_str = "unavailable"
+
         msg = (
             f"📊 *{BOT_NAME}*\n"
+            f"Balance: {equity_str}\n"
             f"z-score: {z_str} | Threshold: ±{Z_THR}\n"
             f"Trend (200h): {trend_str}\n"
             f"{status_str}"
