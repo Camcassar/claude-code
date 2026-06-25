@@ -14,6 +14,8 @@ HOW TO RUN (needs network access to an exchange — run locally or on Railway)
     python scripts/backtest.py                      # Bybit, AVAX/USDT, 30m, 12 months
     python scripts/backtest.py --months 6 --exchange binance
     python scripts/backtest.py --synthetic          # offline demo (labelled synthetic)
+    python scripts/backtest.py --symbol BTC/USDT:USDT --timeframe 5m --months 12
+        # ^ runs the trader.dev clone (V4) on its native BTC 5m market
 
 It prints a comparison table across strategy variants and writes equity curves
 to logs/backtest_<variant>.csv.
@@ -97,8 +99,13 @@ def gen_synthetic(months: int) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 # Indicators / filters
 # --------------------------------------------------------------------------- #
-def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """Wilder ADX — a genuine trend-strength gate (causal)."""
+def dmi(df: pd.DataFrame, period: int = 14) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Wilder DMI — returns (adx, +DI, -DI), all causal.
+
+    ADX measures trend *strength* (the gate); +DI/-DI give trend *direction*.
+    A self-contained ADX strategy — like the trader.dev BTC clip — uses both:
+    gate on ADX > thresh, take direction from the +DI/-DI cross.
+    """
     h, l, c = df["high"], df["low"], df["close"]
     up, dn = h.diff(), -l.diff()
     plus_dm = ((up > dn) & (up > 0)) * up
@@ -108,7 +115,13 @@ def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
     plus_di = 100 * plus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr
     minus_di = 100 * minus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr
     dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
-    return dx.ewm(alpha=1 / period, adjust=False).mean()
+    adx_line = dx.ewm(alpha=1 / period, adjust=False).mean()
+    return adx_line, plus_di, minus_di
+
+
+def adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Wilder ADX — a genuine trend-strength gate (causal)."""
+    return dmi(df, period)[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -118,16 +131,23 @@ def simulate(df: pd.DataFrame, *, gate: str, exit_mode: str,
              equity_pct: float = 0.40, leverage: float = 3.0,
              sl_pct: float = 2.0, tp_pct: float = 3.5, trail_pct: float = 2.0,
              time_exit_bars: int = 24, adx_thresh: float = 25.0,
-             tc_thresh: float = 45.0, start_equity: float = 100.0) -> dict:
-    """Bar-by-bar sim. gate: 'centroid'(broken) | 'adx' | 'none'.
-    exit_mode: 'fixed' (TP/SL) | 'trailing' (trailing stop, no fixed TP)."""
+             tc_thresh: float = 45.0, start_equity: float = 100.0,
+             direction: str = "ema", stop_atr_mult: float = 1.6,
+             target_atr_mult: float = 1.2) -> dict:
+    """Bar-by-bar sim.
+    gate:      'centroid'(broken) | 'adx' | 'none'
+    direction: 'ema' (EMA20/60 alignment) | 'di' (+DI/-DI cross, Wilder DMI)
+    exit_mode: 'fixed' (% TP/SL) | 'trailing' (trailing stop) | 'atr'
+               (stop = stop_atr_mult*ATR, target = target_atr_mult*ATR)"""
     close = df["close"]
     ema_f = _ema(close, 20).values
     ema_s = _ema(close, 60).values
     cent = _spectral_centroid(close).values
     atr = _atr(df).values
     ref_atr = close.pct_change().abs().rolling(200).mean().values
-    adx_v = adx(df).values
+    adx_line, plus_di, minus_di = dmi(df)
+    adx_v = adx_line.values
+    pdi, mdi = plus_di.values, minus_di.values
     px = close.values
     hi, lo = df["high"].values, df["low"].values
 
@@ -161,7 +181,7 @@ def simulate(df: pd.DataFrame, *, gate: str, exit_mode: str,
                 else:
                     hwm = min(hwm, lo[i]); stop = min(stop, hwm * (1 + trail_pct / 100))
                     if hi[i] >= stop: exit_px = stop
-            else:  # fixed
+            else:  # fixed / atr — both ride fixed price levels set at entry
                 if side == 1:
                     if lo[i] <= stop: exit_px = stop
                     elif hi[i] >= tp: exit_px = tp
@@ -179,13 +199,19 @@ def simulate(df: pd.DataFrame, *, gate: str, exit_mode: str,
                 win_streak = win_streak + 1 if pnl > 0 else 0
                 side = 0; bars_held = 0
 
-        # 2) desired exposure from filter + EMA alignment (decided on close[i])
+        # 2) desired exposure from filter + direction signal (decided on close[i])
         want = 0
         if gate_ok(i) and not np.isnan(ref_atr[i]):
-            if ema_f[i] > ema_s[i]:
-                want = 1
-            elif ema_f[i] < ema_s[i]:
-                want = -1
+            if direction == "di":
+                if pdi[i] > mdi[i]:
+                    want = 1
+                elif pdi[i] < mdi[i]:
+                    want = -1
+            else:  # ema alignment
+                if ema_f[i] > ema_s[i]:
+                    want = 1
+                elif ema_f[i] < ema_s[i]:
+                    want = -1
 
         # 3) flip if signal opposes the open position
         if side != 0 and want != 0 and want != side:
@@ -206,7 +232,11 @@ def simulate(df: pd.DataFrame, *, gate: str, exit_mode: str,
             if exit_mode == "trailing":
                 stop = price * (1 - trail_pct / 100) if side == 1 else price * (1 + trail_pct / 100)
                 tp = 0.0
-            else:
+            elif exit_mode == "atr":
+                a = atr[i]
+                stop = price - stop_atr_mult * a if side == 1 else price + stop_atr_mult * a
+                tp = price + target_atr_mult * a if side == 1 else price - target_atr_mult * a
+            else:  # fixed
                 stop = price * (1 - sl_pct / 100) if side == 1 else price * (1 + sl_pct / 100)
                 tp = price * (1 + tp_pct / 100) if side == 1 else price * (1 - tp_pct / 100)
 
@@ -265,6 +295,13 @@ def main() -> int:
         ("V1 ADX gate, fixed TP/SL",               dict(gate="adx",      exit_mode="fixed")),
         ("V2 ADX gate, trailing stop",             dict(gate="adx",      exit_mode="trailing")),
         ("V3 no gate, fixed TP/SL (control)",      dict(gate="none",     exit_mode="fixed")),
+        # V4 = reconstruction of the trader.dev BTC clip: ADX>25 gate, +DI/-DI
+        # direction, ATR exits (stop 1.6x, target 1.2x), no time exit. Run it on
+        # its native market — the others are AVAX-tuned, so compare V4's win%/PF:
+        #   python scripts/backtest.py --symbol BTC/USDT:USDT --timeframe 5m --months 12
+        ("V4 trader.dev clone (ADX-DI + ATR 1.6/1.2)",
+         dict(gate="adx", exit_mode="atr", direction="di",
+              stop_atr_mult=1.6, target_atr_mult=1.2, time_exit_bars=10**9)),
     ]
     print(f"{'variant':42s} {'trades':>6} {'win%':>6} {'net%':>8} {'PF':>5} {'maxDD%':>7}")
     print("-" * 80)
