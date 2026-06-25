@@ -20,8 +20,8 @@ import config
 from exchange import Bybit
 from indicators import ema as ema_series
 
-BOT_NAME    = "Momentum-Z | ETH 1H"
-SYMBOL      = "ETHUSDT"
+SYMBOL      = os.getenv("SYMBOL", "ETHUSDT")
+BOT_NAME    = f"Momentum-Z | {SYMBOL} 1H"
 EMA_N       = 8
 VEL_LAG     = 3
 Z_WIN       = 144
