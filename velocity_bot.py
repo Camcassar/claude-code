@@ -1,58 +1,69 @@
 """
-Velocity-Z v2 Bot — ETHUSDT 1h momentum.
+Momentum-Z | ETHUSDT 1H — Cam's live Bybit bot.
 
-Theory: reverse-engineered from Hilbert F36 (136 verified trades, PF 2.28, 2.4yr).
-Signal: EMA-8 velocity z-score |z|>=2.5 + trend alignment filter.
-Exit:   fixed brackets TP +6.5% / SL -3.0% (server-side on Bybit).
-Risk:   2% of equity per trade (~67% notional at 3% SL).
+Signal: EMA-8 velocity z-score |z|>=2.5 + 200h trend alignment filter.
+Exit:   TP +6.5% / SL -3.0% server-side brackets (crash-safe).
+Risk:   2% equity per trade. Circuit breaker: 4 losses -> 3-day pause.
 
-Optimised params (108-combo sweep, best Sharpe 2.62):
-  TREND_BARS = 200   (was 400)
-  TP_PCT     = 0.065 (was 0.055)
-  SL_PCT     = 0.030 (was 0.025)
-
-Run: python velocity_bot.py
+Backtest (Jan 2024 – Jun 2026): +364% net, PF 1.92, DD 13.3%, Sharpe 2.62.
 """
 
 import logging
+import os
 import sys
 import time
-from datetime import datetime, timezone
-from math import sqrt, floor
+from math import floor, sqrt
+
+import requests
 
 import config
 from exchange import Bybit
 from indicators import ema as ema_series
 
-# ── strategy parameters (optimised; change only with a new backtest) ──
+BOT_NAME    = "Momentum-Z | ETH 1H"
 SYMBOL      = "ETHUSDT"
-INTERVAL    = "60"       # 1h bars
 EMA_N       = 8
 VEL_LAG     = 3
 Z_WIN       = 144
 Z_THR       = 2.5
-TREND_BARS  = 200        # optimised from 400
-TP_PCT      = 0.065      # optimised from 0.055
-SL_PCT      = 0.030      # optimised from 0.025
-RISK_PCT    = 2.0        # % equity risked per trade
+TREND_BARS  = 200
+TP_PCT      = 0.065
+SL_PCT      = 0.030
+RISK_PCT    = 2.0
 POLL_SECONDS = 60
-CANDLES_NEEDED = TREND_BARS + Z_WIN + VEL_LAG + 10  # 357 -> fetch 400
-CB_LOSSES   = 4          # circuit breaker: pause after 4 straight losses
-CB_PAUSE_BARS = 72       # ... for 72 bars (3 days)
+CANDLES_NEEDED = TREND_BARS + Z_WIN + VEL_LAG + 10
+CB_LOSSES   = 4
+CB_PAUSE_BARS = 72
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s velocity: %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("velocity_bot.log"),
-    ],
+    format="%(asctime)s %(levelname)s [Momentum-Z]: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
-log = logging.getLogger("velocity")
+log = logging.getLogger("momentum_z")
+
+# ── Telegram ──────────────────────────────────────────────────────────
+_TG_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "")
+_TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 
+def tg(msg: str) -> None:
+    """Fire-and-forget Telegram message. Silently drops on failure."""
+    if not _TG_TOKEN or not _TG_CHAT_ID:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{_TG_TOKEN}/sendMessage",
+            json={"chat_id": _TG_CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=5,
+        )
+    except Exception:
+        pass
+
+
+# ── Signal ────────────────────────────────────────────────────────────
 def compute_signal(candles):
-    """Returns +1 (long), -1 (short), or 0 for the most recent CLOSED candle."""
+    """Returns +1 (long), -1 (short), or 0."""
     closes = [c["close"] for c in candles]
     if len(closes) < CANDLES_NEEDED:
         return 0
@@ -76,15 +87,15 @@ def compute_signal(candles):
 
     trend = closes[-1] - closes[-1 - TREND_BARS]
     if (side == 1) != (trend > 0):
-        log.info("signal z=%.2f blocked by %dh trend filter", z, TREND_BARS)
+        log.info("z=%.2f blocked by trend filter", z)
         return 0
 
-    log.info("SIGNAL %s | z=%.2f trend=%+.2f",
-             "LONG" if side == 1 else "SHORT", z, trend)
+    log.info("SIGNAL %s | z=%.2f", "LONG" if side == 1 else "SHORT", z)
     return side
 
 
-class VelocityBot:
+# ── Bot ───────────────────────────────────────────────────────────────
+class MomentumZBot:
     def __init__(self):
         self.ex = Bybit(symbol=SYMBOL)
         self.last_bar = 0
@@ -94,25 +105,23 @@ class VelocityBot:
         self.last_pnl_ts = int(time.time() * 1000)
 
     def _track_results(self):
-        """Update loss streak from closed PnL (drives circuit breaker)."""
         try:
             for rec in sorted(self.ex.get_closed_pnl(), key=lambda r: r["ts"]):
                 if rec["ts"] > self.last_pnl_ts:
                     self.last_pnl_ts = rec["ts"]
-                    if rec["pnl"] < 0:
+                    pnl = rec["pnl"]
+                    if pnl < 0:
                         self.loss_streak += 1
-                        log.info("loss booked (%.2f). streak=%d",
-                                 rec["pnl"], self.loss_streak)
+                        log.info("loss booked %.2f USDT | streak=%d", pnl, self.loss_streak)
+                        tg(f"❌ *{BOT_NAME}*\nTrade closed: `{pnl:+.2f} USDT`\nLoss streak: {self.loss_streak}")
                         if self.loss_streak >= CB_LOSSES:
-                            self.pause_until_bar = (
-                                self.last_bar + CB_PAUSE_BARS * 3_600_000
-                            )
-                            log.warning(
-                                "CIRCUIT BREAKER: %d straight losses — pausing 3 days",
-                                self.loss_streak,
-                            )
+                            self.pause_until_bar = self.last_bar + CB_PAUSE_BARS * 3_600_000
+                            msg = f"⚠️ *{BOT_NAME}* — CIRCUIT BREAKER\n{CB_LOSSES} straight losses. Pausing 3 days."
+                            log.warning(msg)
+                            tg(msg)
                     else:
                         self.loss_streak = 0
+                        tg(f"✅ *{BOT_NAME}*\nTrade closed: `+{pnl:.2f} USDT`")
         except Exception as e:
             log.warning("pnl tracking failed: %s", e)
 
@@ -132,14 +141,14 @@ class VelocityBot:
         pos = self.ex.get_position()
         if pos:
             self.had_position = True
-            return  # brackets manage the exit
+            return
 
         if self.had_position:
-            log.info("position closed by bracket.")
+            log.info("position closed by bracket")
             self.had_position = False
 
         if bar_ts < self.pause_until_bar:
-            log.info("circuit breaker active — skipping bar")
+            log.info("circuit breaker active — skipping")
             return
 
         side = compute_signal(closed)
@@ -153,26 +162,38 @@ class VelocityBot:
         qty = floor(round(qty / qty_step, 9)) * qty_step
 
         if qty < min_qty:
-            log.warning("qty %.4f below minimum %.4f, skipping", qty, min_qty)
+            log.warning("qty %.4f below minimum, skipping", qty)
             return
 
-        order_side = "Buy" if side == 1 else "Sell"
+        direction = "LONG" if side == 1 else "SHORT"
         tp = px * (1 + side * TP_PCT)
         sl = px * (1 - side * SL_PCT)
 
-        log.info(
-            "ENTER %s %.4f %s @ ~%.2f | TP %.2f SL %.2f | equity %.2f",
-            order_side, qty, SYMBOL, px, tp, sl, equity,
-        )
-        self.ex.market_order(order_side, qty, stop_loss=sl, take_profit=tp)
+        log.info("ENTER %s %.4f @ ~%.2f | TP %.2f SL %.2f | equity %.2f",
+                 direction, qty, px, tp, sl, equity)
+
+        self.ex.market_order("Buy" if side == 1 else "Sell", qty,
+                             stop_loss=sl, take_profit=tp)
         self.had_position = True
 
-    def run(self):
-        log.info(
-            "Velocity-Z v2 starting | %s 1h | TP %.1f%% SL %.1f%% trend=%dh | testnet=%s",
-            SYMBOL, TP_PCT * 100, SL_PCT * 100, TREND_BARS, config.TESTNET,
+        tg(
+            f"{'📈' if side == 1 else '📉'} *{BOT_NAME}*\n"
+            f"*{direction}* {qty} {SYMBOL}\n"
+            f"Entry: `{px:.2f}` | TP: `{tp:.2f}` | SL: `{sl:.2f}`\n"
+            f"Risk: 2% of `{equity:.2f} USDT`"
         )
+
+    def run(self):
+        startup = (
+            f"🚀 *{BOT_NAME}* — LIVE\n"
+            f"Symbol: {SYMBOL} | TF: 1H\n"
+            f"TP: {TP_PCT*100:.1f}% | SL: {SL_PCT*100:.1f}% | Trend: {TREND_BARS}h\n"
+            f"Testnet: {config.TESTNET}"
+        )
+        log.info(startup.replace("*", "").replace("`", ""))
+        tg(startup)
         self.ex.set_leverage()
+
         while True:
             try:
                 self.tick()
@@ -187,4 +208,4 @@ class VelocityBot:
 if __name__ == "__main__":
     if not config.API_KEY or not config.API_SECRET:
         sys.exit("Set BYBIT_API_KEY and BYBIT_API_SECRET in .env first.")
-    VelocityBot().run()
+    MomentumZBot().run()
