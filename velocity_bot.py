@@ -63,10 +63,10 @@ def tg(msg: str) -> None:
 
 # ── Signal ────────────────────────────────────────────────────────────
 def compute_signal(candles):
-    """Returns +1 (long), -1 (short), or 0."""
+    """Returns (z_score, side) where side is +1, -1, or 0."""
     closes = [c["close"] for c in candles]
     if len(closes) < CANDLES_NEEDED:
-        return 0
+        return 0.0, 0
 
     base = ema_series(closes, EMA_N)
     vel = [
@@ -74,7 +74,7 @@ def compute_signal(candles):
         for i in range(VEL_LAG, len(base))
     ]
     if len(vel) < Z_WIN:
-        return 0
+        return 0.0, 0
 
     window = vel[-Z_WIN:]
     m = sum(window) / Z_WIN
@@ -82,16 +82,17 @@ def compute_signal(candles):
     z = (vel[-1] - m) / sqrt(var) if var > 0 else 0.0
 
     side = 1 if z >= Z_THR else (-1 if z <= -Z_THR else 0)
-    if side == 0:
-        return 0
-
     trend = closes[-1] - closes[-1 - TREND_BARS]
-    if (side == 1) != (trend > 0):
-        log.info("z=%.2f blocked by trend filter", z)
-        return 0
+    trend_aligned = (side == 0) or ((side == 1) == (trend > 0))
 
-    log.info("SIGNAL %s | z=%.2f", "LONG" if side == 1 else "SHORT", z)
-    return side
+    if side != 0 and not trend_aligned:
+        log.info("z=%.2f blocked by trend filter", z)
+        return z, 0
+
+    if side != 0:
+        log.info("SIGNAL %s | z=%.2f", "LONG" if side == 1 else "SHORT", z)
+
+    return z, side
 
 
 # ── Bot ───────────────────────────────────────────────────────────────
@@ -103,6 +104,9 @@ class MomentumZBot:
         self.pause_until_bar = 0
         self.had_position = False
         self.last_pnl_ts = int(time.time() * 1000)
+        self.last_report_hour = -1
+        self._last_z = 0.0
+        self._last_trend = None  # True=up, False=down, None=unknown
 
     def _track_results(self):
         try:
@@ -125,7 +129,53 @@ class MomentumZBot:
         except Exception as e:
             log.warning("pnl tracking failed: %s", e)
 
+    def _send_status(self, pos):
+        closes_needed = CANDLES_NEEDED
+        try:
+            candles = self.ex.get_candles(limit=closes_needed + 5)
+            closed = candles[:-1]
+            z, _ = compute_signal(closed)
+            closes = [c["close"] for c in closed]
+            trend_up = closes[-1] > closes[-1 - TREND_BARS] if len(closes) > TREND_BARS else None
+            self._last_z = z
+            self._last_trend = trend_up
+        except Exception:
+            z = self._last_z
+            trend_up = self._last_trend
+
+        trend_str = ("UP ✅" if trend_up else "DOWN ✅") if trend_up is not None else "unknown"
+        z_str = f"`{z:+.3f}`"
+        pct_to_thr = abs(z) / Z_THR * 100
+
+        if pos:
+            side_str = "📈 LONG" if pos.get("side") == "Buy" else "📉 SHORT"
+            status_str = f"{side_str} position held — TP/SL active"
+        elif self.last_bar < self.pause_until_bar:
+            status_str = "⚠️ Circuit breaker active — paused"
+        elif abs(z) >= Z_THR and trend_up is not None and ((z > 0) == trend_up):
+            status_str = "🔥 Signal firing!"
+        else:
+            status_str = f"Watching — z is {pct_to_thr:.0f}% of threshold"
+
+        msg = (
+            f"📊 *{BOT_NAME}*\n"
+            f"z-score: {z_str} | Threshold: ±{Z_THR}\n"
+            f"Trend (200h): {trend_str}\n"
+            f"{status_str}"
+        )
+        log.info("hourly status | z=%.3f trend=%s pos=%s", z, trend_up, bool(pos))
+        tg(msg)
+
     def tick(self):
+        now_hour = int(time.time()) // 3600
+        if now_hour != self.last_report_hour:
+            self.last_report_hour = now_hour
+            try:
+                pos_for_status = self.ex.get_position()
+            except Exception:
+                pos_for_status = None
+            self._send_status(pos_for_status)
+
         candles = self.ex.get_candles(limit=400)
         if len(candles) < CANDLES_NEEDED + 1:
             log.warning("not enough candles yet (%d)", len(candles))
@@ -151,7 +201,8 @@ class MomentumZBot:
             log.info("circuit breaker active — skipping")
             return
 
-        side = compute_signal(closed)
+        z, side = compute_signal(closed)
+        self._last_z = z
         if side == 0:
             return
 
