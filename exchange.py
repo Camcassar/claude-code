@@ -81,6 +81,7 @@ class Bybit:
                     "entry":          float(p["avgPrice"]),
                     "unrealized_pnl": float(p["unrealisedPnl"]),
                     "stop_loss":      float(p["stopLoss"]) if p["stopLoss"] else None,
+                    "take_profit":    float(p["takeProfit"]) if p["takeProfit"] else None,
                 }
         return None
 
