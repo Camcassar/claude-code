@@ -3,11 +3,12 @@ Momentum-Z | ETHUSDT 1H — Cam's live Bybit bot.
 
 Signal: EMA-8 velocity z-score |z|>=2.5 + 200h trend alignment filter.
 Exit:   TP +6.5% / SL -3.0% server-side brackets (crash-safe).
-Risk:   2% equity per trade. Circuit breaker: 4 losses -> 3-day pause.
+Risk:   4% equity per trade. Circuit breaker: 4 losses -> 3-day pause.
 
 Backtest (Jan 2024 – Jun 2026): +364% net, PF 1.92, DD 13.3%, Sharpe 2.62.
 """
 
+import csv
 import logging
 import os
 import sys
@@ -32,6 +33,7 @@ SL_PCT      = 0.030
 RISK_PCT    = 4.0
 POLL_SECONDS = 60
 CANDLES_NEEDED = TREND_BARS + Z_WIN + VEL_LAG + 10
+TRADE_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "trades.csv")
 CB_LOSSES   = 4
 CB_PAUSE_BARS = 72
 
@@ -59,6 +61,22 @@ def tg(msg: str) -> None:
         )
     except Exception:
         pass
+
+
+# ── Trade log ─────────────────────────────────────────────────────────
+_LOG_FIELDS = ["timestamp", "type", "direction", "qty", "price", "tp", "sl", "equity", "z_score", "pnl", "loss_streak"]
+
+
+def _log_trade(row: dict) -> None:
+    write_header = not os.path.exists(TRADE_LOG)
+    try:
+        with open(TRADE_LOG, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=_LOG_FIELDS)
+            if write_header:
+                w.writeheader()
+            w.writerow({k: row.get(k, "") for k in _LOG_FIELDS})
+    except Exception as e:
+        log.warning("trade log write failed: %s", e)
 
 
 # ── Signal ────────────────────────────────────────────────────────────
@@ -126,6 +144,12 @@ class MomentumZBot:
                     else:
                         self.loss_streak = 0
                         tg(f"✅ *{BOT_NAME}*\nTrade closed: `+{pnl:.2f} USDT`")
+                    _log_trade({
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(rec["ts"] / 1000)),
+                        "type": "EXIT",
+                        "pnl": round(pnl, 4),
+                        "loss_streak": self.loss_streak,
+                    })
         except Exception as e:
             log.warning("pnl tracking failed: %s", e)
 
@@ -234,12 +258,26 @@ class MomentumZBot:
                              stop_loss=sl, take_profit=tp)
         self.had_position = True
 
+        ts_now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        log.info("TRADE ENTERED %s %.4f @ %.2f | z=%.3f | TP %.2f SL %.2f | equity %.2f",
+                 direction, qty, px, z, tp, sl, equity)
         tg(
-            f"{'📈' if side == 1 else '📉'} *{BOT_NAME}*\n"
-            f"*{direction}* {qty} {SYMBOL}\n"
+            f"{'📈' if side == 1 else '📉'} *{BOT_NAME}* — TRADE ENTERED\n"
+            f"*{direction}* `{qty}` {SYMBOL}\n"
             f"Entry: `{px:.2f}` | TP: `{tp:.2f}` | SL: `{sl:.2f}`\n"
-            f"Risk: 2% of `{equity:.2f} USDT`"
+            f"z-score: `{z:+.3f}` | Risk: `{RISK_PCT:.0f}%` of `{equity:.2f} USDT`"
         )
+        _log_trade({
+            "timestamp": ts_now,
+            "type": "ENTRY",
+            "direction": direction,
+            "qty": qty,
+            "price": px,
+            "tp": round(tp, 4),
+            "sl": round(sl, 4),
+            "equity": round(equity, 2),
+            "z_score": round(z, 4),
+        })
 
     def run(self):
         startup = (
