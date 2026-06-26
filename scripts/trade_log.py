@@ -1,14 +1,16 @@
 """
-Trade log viewer — pulls live data from Bybit + local CSV.
+Trade log viewer — live position + full Bybit history across all symbols.
 
 Usage:
-    python scripts/trade_log.py          # show all closed trades + current position
-    python scripts/trade_log.py --limit 20
+    python scripts/trade_log.py          # last 50 trades
+    python scripts/trade_log.py --limit 100
 """
 
 import argparse
+import csv
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -18,11 +20,10 @@ from exchange import Bybit
 
 def fmt_pnl(pnl: float) -> str:
     sign = "+" if pnl >= 0 else ""
-    return f"{sign}{pnl:.4f} USDT"
+    return f"{sign}{pnl:.4f}"
 
 
 def fmt_ts(ts_ms: int) -> str:
-    import time
     return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(ts_ms / 1000))
 
 
@@ -38,33 +39,29 @@ def main():
 
     # ── Current position ─────────────────────────────────────────────
     print("\n── Current Position ──────────────────────────────────────")
-    pos = ex.get_position()
-    equity = ex.get_equity()
-    print(f"  Balance : {equity:.2f} USDT")
-    if pos:
-        direction = "LONG" if pos["side"] == "Buy" else "SHORT"
-        pnl_str = fmt_pnl(pos["unrealized_pnl"])
-        sl_str = f"{pos['stop_loss']:.2f}" if pos["stop_loss"] else "—"
-        tp_str = f"{pos['take_profit']:.2f}" if pos.get("take_profit") else "—"
-        print(f"  Position: {direction} {pos['size']} ETHUSDT")
-        print(f"  Entry   : {pos['entry']:.2f}")
-        print(f"  Unreal. : {pnl_str}")
-        print(f"  TP      : {tp_str}")
-        print(f"  SL      : {sl_str}")
-    else:
-        print("  Position: None (flat)")
-
-    # ── Closed trades from Bybit ──────────────────────────────────────
-    print(f"\n── Closed Trades (last {args.limit}) ─────────────────────")
     try:
-        r = ex.http.get_closed_pnl(
-            category=config.CATEGORY,
-            symbol=config.SYMBOL,
-            limit=args.limit,
-        )
-        trades = r["result"]["list"]
+        pos = ex.get_position()
+        equity = ex.get_equity()
+        print(f"  Balance : {equity:.2f} USDT")
+        if pos:
+            direction = "LONG" if pos["side"] == "Buy" else "SHORT"
+            tp_str = f"{pos['take_profit']:.2f}" if pos.get("take_profit") else "—"
+            sl_str = f"{pos['stop_loss']:.2f}" if pos.get("stop_loss") else "—"
+            print(f"  Position: {direction} {pos['size']} {config.SYMBOL}")
+            print(f"  Entry   : {pos['entry']:.2f}")
+            print(f"  Unreal. : {fmt_pnl(pos['unrealized_pnl'])} USDT")
+            print(f"  TP      : {tp_str}  |  SL: {sl_str}")
+        else:
+            print("  Position: None (flat)")
     except Exception as e:
-        print(f"  Error fetching closed PnL: {e}")
+        print(f"  Error fetching position: {e}")
+
+    # ── Full trade history from Bybit ─────────────────────────────────
+    print(f"\n── Closed Trades — All Symbols (last {args.limit}) ──────────")
+    try:
+        trades = ex.get_all_closed_pnl(limit=args.limit)
+    except Exception as e:
+        print(f"  Error fetching trades: {e}")
         trades = []
 
     if not trades:
@@ -72,43 +69,64 @@ def main():
     else:
         wins = losses = 0
         total_pnl = 0.0
-        print(f"  {'#':<4} {'Closed':<20} {'Side':<6} {'Qty':<8} {'Entry':>8} {'Exit':>8} {'PnL':>12}")
-        print("  " + "─" * 72)
+        by_symbol: dict = {}
+
+        print(f"  {'#':<4} {'Closed':<20} {'Symbol':<10} {'Side':<6} {'Entry':>8} {'Exit':>8} {'PnL (USDT)':>12}")
+        print("  " + "─" * 74)
+
         for i, t in enumerate(trades, 1):
             pnl = float(t["closedPnl"])
             side = "LONG" if t["side"] == "Buy" else "SHORT"
-            qty = float(t["qty"])
+            sym = t["symbol"]
             entry = float(t["avgEntryPrice"])
             exit_px = float(t["avgExitPrice"])
             closed_at = fmt_ts(int(t["updatedTime"]))
             total_pnl += pnl
+            marker = "✅" if pnl >= 0 else "❌"
             if pnl >= 0:
                 wins += 1
             else:
                 losses += 1
-            marker = "✅" if pnl >= 0 else "❌"
-            print(f"  {i:<4} {closed_at:<20} {side:<6} {qty:<8} {entry:>8.2f} {exit_px:>8.2f} {fmt_pnl(pnl):>12}  {marker}")
+            by_symbol.setdefault(sym, {"wins": 0, "losses": 0, "pnl": 0.0})
+            if pnl >= 0:
+                by_symbol[sym]["wins"] += 1
+            else:
+                by_symbol[sym]["losses"] += 1
+            by_symbol[sym]["pnl"] += pnl
+            print(f"  {i:<4} {closed_at:<20} {sym:<10} {side:<6} {entry:>8.3f} {exit_px:>8.3f} {fmt_pnl(pnl):>12}  {marker}")
 
-        print("  " + "─" * 72)
+        print("  " + "─" * 74)
         total = wins + losses
         wr = (wins / total * 100) if total else 0
-        print(f"  Total: {total} trades | W {wins} / L {losses} | Win rate {wr:.0f}% | Net PnL {fmt_pnl(total_pnl)}")
+        print(f"  {total} trades | W {wins} / L {losses} | Win rate {wr:.0f}% | Net PnL {fmt_pnl(total_pnl)} USDT")
 
-    # ── Local CSV log ─────────────────────────────────────────────────
-    csv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "trades.csv")
+        if len(by_symbol) > 1:
+            print("\n── By Symbol ─────────────────────────────────────────────")
+            for sym, s in by_symbol.items():
+                t2 = s["wins"] + s["losses"]
+                wr2 = (s["wins"] / t2 * 100) if t2 else 0
+                print(f"  {sym:<10} W {s['wins']} / L {s['losses']} | WR {wr2:.0f}% | PnL {fmt_pnl(s['pnl'])} USDT")
+
+    # ── Local persistent CSV (Railway /data volume) ───────────────────
+    csv_path = os.getenv("TRADE_LOG", os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "trades.csv"
+    ))
     if os.path.exists(csv_path):
-        import csv
-        print(f"\n── Local Trade Log ({csv_path}) ──────────────────────────")
+        print(f"\n── Local Entry Log ({csv_path}) ──────────────────────────")
         with open(csv_path) as f:
             rows = list(csv.DictReader(f))
         if not rows:
             print("  No entries yet.")
         else:
+            print(f"  {'Time':<22} {'Type':<6} {'Dir':<6} {'Qty':<8} {'Price':>8} {'z-score':>8} {'Equity':>8} {'PnL':>10}")
+            print("  " + "─" * 80)
             for row in rows:
                 if row["type"] == "ENTRY":
-                    print(f"  ENTRY  {row['timestamp']}  {row['direction']:<6}  qty={row['qty']}  px={row['price']}  z={row['z_score']}  eq={row['equity']}")
+                    print(f"  {row['timestamp']:<22} ENTRY  {row['direction']:<6} {row['qty']:<8} {row['price']:>8} {row['z_score']:>8} {row['equity']:>8}")
                 else:
-                    print(f"  EXIT   {row['timestamp']}  pnl={row['pnl']}  streak={row['loss_streak']}")
+                    print(f"  {row['timestamp']:<22} EXIT   {'':6} {'':8} {'':>8} {'':>8} {'':>8} {row['pnl']:>10}  streak={row['loss_streak']}")
+    else:
+        print(f"\n  (No local entry log yet — will appear at {csv_path} after first trade)")
 
 
 if __name__ == "__main__":

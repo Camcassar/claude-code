@@ -33,7 +33,7 @@ SL_PCT      = 0.030
 RISK_PCT    = 4.0
 POLL_SECONDS = 60
 CANDLES_NEEDED = TREND_BARS + Z_WIN + VEL_LAG + 10
-TRADE_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "trades.csv")
+TRADE_LOG = os.getenv("TRADE_LOG", os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "trades.csv"))
 CB_LOSSES   = 4
 CB_PAUSE_BARS = 72
 

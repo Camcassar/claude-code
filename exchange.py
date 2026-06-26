@@ -125,7 +125,7 @@ class Bybit:
         )
 
     def get_closed_pnl(self, limit=10):
-        """Recent closed-trade PnL (for circuit breaker tracking)."""
+        """Recent closed-trade PnL for this symbol (circuit breaker tracking)."""
         r = self.http.get_closed_pnl(
             category=config.CATEGORY, symbol=self.symbol, limit=limit
         )
@@ -133,3 +133,8 @@ class Bybit:
             {"ts": int(row["updatedTime"]), "pnl": float(row["closedPnl"])}
             for row in r["result"]["list"]
         ]
+
+    def get_all_closed_pnl(self, limit=50):
+        """All closed trades across all symbols (for trade log viewer)."""
+        r = self.http.get_closed_pnl(category=config.CATEGORY, limit=limit)
+        return r["result"]["list"]
